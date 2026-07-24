@@ -1,0 +1,13 @@
+node_modules
+dist
+coverage
+.vite
+.pnpm-store
+.image
+
+*.log
+*.tsbuildinfo
+
+.env
+.DS_Store
+Thumbs.db
