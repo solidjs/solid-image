@@ -1,6 +1,10 @@
 import sharp from "sharp";
 import type { SolidImageFormat } from "../core/types.ts";
 
+/**
+ * Resizes an image to the given width and converts it to the target format.
+ * The height follows the aspect ratio. Quality goes from 1 to 100.
+ */
 export function transformImage(
   originalPath: string,
   targetFormat: SolidImageFormat,
@@ -37,6 +41,7 @@ interface ImageData {
   height: number;
 }
 
+/** Reads the intrinsic size of an image. Missing values become 0. */
 export async function getImageData(originalPath: string): Promise<ImageData> {
   const result = await sharp(originalPath).metadata();
   return {
