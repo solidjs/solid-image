@@ -55,11 +55,23 @@ function isValidFileExtension(extensions: Set<string>, target: string): target i
   return extensions.has(target);
 }
 
-async function getImageSource(imagePath: string, relativePath: string): Promise<string> {
-  // TODO add format variation
+/**
+ * Builds the module that carries the image and its intrinsic size.
+ *
+ * `source` points at the largest variant of the fallback format rather than the
+ * original file, so the untouched original never reaches the bundle.
+ */
+async function getImageSource(
+  imagePath: string,
+  relativePath: string,
+  fallback: SolidImageFormat,
+  largestSize: number,
+): Promise<string> {
   const imageData = await getImageData(imagePath);
+  const variantPath = `${relativePath}?image-raw-${fallback}-${largestSize}`;
+
   return `
-import source from ${JSON.stringify(relativePath)};
+import source from ${JSON.stringify(variantPath)};
 export default {
   width: ${JSON.stringify(imageData.width)},
   height: ${JSON.stringify(imageData.height)},
@@ -154,12 +166,21 @@ export default {
     const quality = options.local.quality ?? DEFAULT_QUALITY;
     const sizes = options.local.sizes;
     const publicPath = options.local.publicPath ?? "dist";
+    // The last output format is the least preferred one, so it is the format
+    // every browser is expected to read.
+    const fallbackFormat = outputFormat[outputFormat.length - 1]!;
+    const largestSize = Math.max(...sizes);
 
     const validInputFileExtensions = getValidFileExtensions(inputFormat);
+
+    let isBuild = false;
 
     plugins.push({
       name: "solid-start:image/local",
       enforce: "pre",
+      configResolved(config) {
+        isBuild = config.command === "build";
+      },
       resolveId(id, importer) {
         if (LOCAL_PATH.test(id) && importer) {
           return path.join(path.dirname(importer), id);
@@ -183,7 +204,7 @@ export default {
         const relativePath = `./${name}.${actualExtension}`;
         // Get the true source
         if (condition.startsWith("image-source")) {
-          return await getImageSource(originalPath, relativePath);
+          return await getImageSource(originalPath, relativePath, fallbackFormat, largestSize);
         }
         // Get the transformer file
         if (condition.startsWith("image-transformer")) {
@@ -196,6 +217,18 @@ export default {
           const filename = `i-${hash}-${size}.${getOutputFileFromFormat(format as SolidImageFormat)}`;
           const image = transformImage(originalPath, format as SolidImageFormat, +size!, quality);
           const buffer = await image.toBuffer();
+
+          // On build the file goes through the bundler, so it picks up `base`,
+          // `assetsDir` and the manifest like any other asset.
+          if (isBuild) {
+            const referenceId = this.emitFile({
+              type: "asset",
+              name: filename,
+              source: buffer,
+            });
+            return `export default import.meta.ROLLUP_FILE_URL_${referenceId};`;
+          }
+
           const basePath = path.join(".image", filename);
           const targetPath = path.join(publicPath, basePath);
           await outputFile(targetPath, buffer);

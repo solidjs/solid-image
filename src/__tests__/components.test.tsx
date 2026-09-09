@@ -124,9 +124,13 @@ describe("SolidImage SSR", () => {
 
     // The server placeholder is a blank SVG of the same size, so the browser
     // does not fetch the image before it scrolls into view.
-    expect(html).not.toContain("hero.png");
     expect(html).toContain("data:image/svg+xml,");
     expect(html).toContain(encodeURIComponent('width="800"'));
+
+    // The real image is only offered to readers with no JavaScript, and a
+    // browser never loads the content of a noscript element.
+    const outsideNoscript = html.replace(/<noscript[^>]*>.*?<\/noscript>/gs, "");
+    expect(outsideNoscript).not.toContain("hero.png");
   });
 
   it("renders one <source> per MIME type with a srcset", () => {
@@ -145,9 +149,7 @@ describe("SolidImage SSR", () => {
       />
     ));
 
-    expect(html).toContain(
-      '<source data-hk="01000" type="image/webp" srcset="/hero-400.webp 400w,/hero-800.webp 800w">',
-    );
+    expect(html).toContain('type="image/webp" srcset="/hero-400.webp 400w,/hero-800.webp 800w"');
     expect(html).toContain('type="image/jpeg" srcset="/hero-400.jpg 400w"');
   });
 
@@ -190,6 +192,79 @@ describe("SolidImage SSR", () => {
     ));
 
     expect(html).not.toContain("loading");
+  });
+
+  it("gives the img a srcset from the least preferred format", () => {
+    const html = renderToString(() => (
+      <SolidImage
+        src={{ source: "/hero.png", width: 1600, height: 900, options: {} }}
+        alt="hero"
+        eager
+        transformer={{
+          transform: () => [
+            { path: "/hero-400.webp", width: 400, type: "image/webp" },
+            { path: "/hero-400.jpg", width: 400, type: "image/jpeg" },
+            { path: "/hero-800.jpg", width: 800, type: "image/jpeg" },
+          ],
+        }}
+        fallback={() => <div>loading</div>}
+      />
+    ));
+
+    // Without this the browser falls back to the full size original.
+    expect(html).toContain('srcset="/hero-400.jpg 400w,/hero-800.jpg 800w" alt="hero"');
+  });
+
+  it("gives the img no srcset when there is no transformer", () => {
+    const html = renderToString(() => (
+      <SolidImage
+        src={{ source: "/hero.png", width: 100, height: 100, options: {} }}
+        alt="hero"
+        eager
+        fallback={() => <div>loading</div>}
+      />
+    ));
+
+    expect(html).not.toContain("srcset=");
+  });
+
+  it("renders the real image on the server when it is eager", () => {
+    const html = renderToString(() => (
+      <SolidImage
+        src={{ source: "/hero.png", width: 100, height: 100, options: {} }}
+        alt="hero"
+        eager
+        fetchPriority="high"
+        fallback={() => <div>loading</div>}
+      />
+    ));
+
+    const outsideNoscript = html.replace(/<noscript[^>]*>.*?<\/noscript>/gs, "");
+
+    // The browser finds the image while it parses the page, instead of waiting
+    // for the observer to report.
+    expect(outsideNoscript).toContain('src="/hero.png"');
+    expect(outsideNoscript).not.toContain("data:image/svg+xml,");
+    expect(outsideNoscript).toContain('fetchpriority="high"');
+  });
+
+  it("offers the image to readers with no JavaScript", () => {
+    const html = renderToString(() => (
+      <SolidImage
+        src={{ source: "/hero.png", width: 1600, height: 900, options: {} }}
+        alt="hero"
+        transformer={{
+          transform: () => [{ path: "/hero-400.jpg", width: 400, type: "image/jpeg" }],
+        }}
+        fallback={() => <div>loading</div>}
+      />
+    ));
+
+    const noscript = /<noscript[^>]*>(.*?)<\/noscript>/s.exec(html)![1]!;
+
+    expect(noscript).toContain('src="/hero.png"');
+    expect(noscript).toContain('srcset="/hero-400.jpg 400w"');
+    expect(noscript).toContain('alt="hero"');
   });
 
   it("marks the container, aspect ratio box, picture and blocker elements", () => {

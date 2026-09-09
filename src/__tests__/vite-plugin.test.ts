@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import sharp from "sharp";
 import type { Plugin } from "vite";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { imagePlugin } from "../vite/index";
 import type { SolidImageOptions } from "../vite/index";
 
@@ -15,10 +15,16 @@ function callResolveId(plugin: Plugin, id: string, importer?: string) {
   return fn.call({} as any, id, importer, {});
 }
 
-function callLoad(plugin: Plugin, id: string) {
+function callLoad(plugin: Plugin, id: string, context: unknown = {}) {
   const hook = plugin.load as any;
   const fn = typeof hook === "function" ? hook : hook.handler;
-  return fn.call({} as any, id, {});
+  return fn.call(context as any, id, {});
+}
+
+function callConfigResolved(plugin: Plugin, command: "build" | "serve") {
+  const hook = plugin.configResolved as any;
+  const fn = typeof hook === "function" ? hook : hook.handler;
+  fn.call({} as any, { command } as any);
 }
 
 function getPlugin(plugins: Plugin[], name: string): Plugin {
@@ -207,7 +213,15 @@ describe("local images", () => {
 
     expect(code).toContain("width: 64");
     expect(code).toContain("height: 32");
-    expect(code).toContain('import source from "./photo.png"');
+  });
+
+  it("points the source at the largest variant of the fallback format", async () => {
+    const plugin = createLocalPlugin({ output: ["webp", "jpeg"], sizes: [400, 800] });
+    const code: string = await callLoad(plugin, path.join(dir, "photo.png?image-source"));
+
+    // jpeg is last in the output list, so it is the format every browser reads.
+    expect(code).toContain('import source from "./photo.png?image-raw-jpeg-800"');
+    expect(code).not.toContain('import source from "./photo.png"');
   });
 
   it("loads a transformer that imports one variant per format and size", async () => {
@@ -247,6 +261,43 @@ describe("local images", () => {
     const meta = await sharp(emitted).metadata();
     expect(meta.format).toBe("webp");
     expect(meta.width).toBe(400);
+  });
+
+  it("emits the file through the bundler on build", async () => {
+    const plugin = createLocalPlugin();
+    callConfigResolved(plugin, "build");
+
+    const emitFile = vi.fn((_asset: { type: string; name: string; source: Buffer }) => "abc123");
+    const code: string = await callLoad(
+      plugin,
+      path.join(dir, "photo.png?image-raw-webp-400"),
+      { emitFile },
+    );
+
+    // Going through the bundler is what makes `base`, `assetsDir` and the
+    // manifest apply to these files.
+    expect(code).toBe("export default import.meta.ROLLUP_FILE_URL_abc123;");
+    expect(emitFile).toHaveBeenCalledTimes(1);
+
+    const emitted = emitFile.mock.calls[0]![0];
+    expect(emitted.type).toBe("asset");
+    expect(emitted.name).toMatch(/^i-[0-9a-f]+-400\.webp$/);
+
+    const meta = await sharp(emitted.source).metadata();
+    expect(meta.format).toBe("webp");
+    expect(meta.width).toBe(400);
+  });
+
+  it("does not write to the public directory on build", async () => {
+    const buildPublicPath = path.join(dir, "build-public");
+    const plugin = createLocalPlugin({ publicPath: buildPublicPath });
+    callConfigResolved(plugin, "build");
+
+    await callLoad(plugin, path.join(dir, "photo.png?image-raw-webp-400"), {
+      emitFile: () => "abc123",
+    });
+
+    await expect(fs.stat(buildPublicPath)).rejects.toThrow();
   });
 
   it("uses the jpg extension for jpeg output", async () => {

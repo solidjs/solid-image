@@ -3,7 +3,8 @@
 Optimized image components and Vite tooling for [Solid](https://solidjs.com).
 
 - `SolidImage` renders a responsive `<picture>` that reserves the image's aspect ratio, so the page does not shift while the image loads.
-- The image only loads once it scrolls into view, using `IntersectionObserver`.
+- The image only loads once it scrolls into view, using `IntersectionObserver`. Mark the image above the fold as `eager` and it loads right away.
+- Readers with no JavaScript still get the image.
 - Your own placeholder is rendered while the image loads, and fades out when the image is ready.
 - The Vite plugin turns a local image import into a set of resized and reformatted files at build time.
 - Remote images go through your own URL mapping, so a CDN can serve the variants instead.
@@ -170,6 +171,7 @@ The component does not depend on the plugin. Pass `src` and an optional `transfo
 | `alt` | `string` | yes | Alternative text for the image. |
 | `fallback` | `(visible: () => boolean, onLoad: () => void) => JSX.Element` | yes | Placeholder shown while the image loads. See below. |
 | `transformer` | `SolidImageTransformer<T>` | no | Produces the responsive variants for `src`. |
+| `eager` | `boolean` | no | Loads the image right away instead of waiting for it to scroll into view. |
 | `onLoad` | `() => void` | no | Called once the image has loaded and the placeholder is hidden. |
 | `crossOrigin` | `JSX.HTMLCrossorigin` | no | Forwarded to the `<img>`. |
 | `fetchPriority` | `"high" \| "low" \| "auto"` | no | Forwarded to the `<img>`. |
@@ -181,6 +183,16 @@ The `fallback` callback receives two arguments.
 - `onLoad` tells the component that your placeholder is on screen. Call it once your placeholder has mounted. The image is only revealed after this call, so the placeholder is never skipped by an image that loads instantly.
 
 The `fallback` only renders on the client, and only after the container has scrolled into view.
+
+### Above the fold
+
+Lazy loading costs time for the first image on the page, because nothing starts until the observer reports. Mark that one image as `eager`.
+
+```tsx
+<SolidImage {...example} alt="example" eager fetchPriority="high" fallback={...} />
+```
+
+The server then renders the real image instead of a blank placeholder, so the browser finds it while it parses the page. Leave every other image lazy.
 
 ### Types
 
@@ -211,6 +223,8 @@ interface SolidImageTransformer<T> {
 
 Variants are grouped by `type` and merged into one `srcset` per group. The browser picks the first `<source>` whose type it supports, then picks a width from the `srcset`. Order your output formats from most to least preferred.
 
+The `<img>` carries the last group as its own `srcset`, for a browser that supports none of the formats above it. That group should be the most widely supported format, which is why the order matters.
+
 The transformer is optional. Without one, no `<source>` is rendered and the browser loads `src.source` directly.
 
 ### `imagePlugin(options)`
@@ -233,7 +247,11 @@ Handles imports ending in `?image`.
 
 One file is emitted per output format and per size, so `output: ["webp", "jpeg"]` with `sizes: [480, 800]` gives four files per image.
 
-Files are written to `<publicPath>/.image/i-<hash>-<width>.<ext>`, where the hash is an xxHash32 of the source path. The module exports the public URL `/.image/i-<hash>-<width>.<ext>`, so `publicPath` should be a directory that is served at the root of your site. Add `.image` to `.gitignore` if it lives inside a checked in directory such as `public`.
+On build the files go through the bundler as assets, so `base`, `assetsDir` and the build manifest apply to them like any other asset. Nothing is written to `publicPath`.
+
+On the dev server the files are written to `<publicPath>/.image/i-<hash>-<width>.<ext>` and served from `/.image/...`, so `publicPath` should be a directory that is served at the root of your site. Add `.image` to `.gitignore` if it lives inside a checked in directory such as `public`.
+
+The image the `<img>` falls back to is the largest size of the last output format. The original file is never imported, so it does not reach the bundle.
 
 #### `options.remote`
 
@@ -253,7 +271,8 @@ Both option groups are optional. Passing neither returns no plugin.
 2. An `IntersectionObserver` watches the container. Nothing loads until it enters the viewport.
 3. Once visible, the `<img>` and your placeholder are rendered. The image starts fully transparent.
 4. Your placeholder calls `onLoad` to say it is on screen. When the image finishes loading after that, the placeholder is hidden, the image fades in and the `onLoad` prop is called.
-5. On the server, the `<img>` renders with a blank SVG of the same size, so the browser does not fetch the image before it is in view. The placeholder and the loading logic are client only.
+5. On the server, a lazy `<img>` renders with a blank SVG of the same size, so the browser does not fetch the image before it is in view. An eager `<img>` renders in full. The placeholder and the loading logic are client only.
+6. The server also renders a `<noscript>` copy of the image, so a reader with no JavaScript sees it. Browsers never load the content of a `<noscript>` element, so it costs nothing otherwise.
 
 The rendered elements carry a `data-solid-image` attribute you can style. The values are `container`, `aspect-ratio`, `picture`, `image` and `blocker`. The shipped stylesheet uses the same attribute.
 
