@@ -8,7 +8,7 @@ import {
   mergeImageVariantsToSrcSet,
 } from "./transformer.ts";
 import type { SolidImageSource, SolidImageTransformer, SolidImageVariant } from "./types.ts";
-import { getAspectRatioBoxStyle, getEmptyImageURL } from "./utils.ts";
+import { getAspectRatioBoxStyle, getEmptyImageURL, getPlaceholderStyle } from "./utils.ts";
 
 import "./styles.css";
 
@@ -29,8 +29,19 @@ export interface SolidImageProps<T> {
    * `visible` is true while the placeholder should be shown.
    * Call `onLoad` once the placeholder has mounted. The image is only
    * revealed after that call, so a fast image never skips the placeholder.
+   *
+   * Leave it out to reveal the image as soon as it loads.
    */
-  fallback: (visible: () => boolean, onLoad: () => void) => JSX.Element;
+  fallback?: (visible: () => boolean, onLoad: () => void) => JSX.Element;
+
+  /**
+   * Value of the `sizes` attribute, such as `50vw` or
+   * `(max-width: 600px) 100vw, 50vw`.
+   *
+   * Without it the browser assumes the image spans the full viewport width and
+   * downloads a larger variant than it needs.
+   */
+  sizes?: string | undefined;
 
   crossOrigin?: JSX.HTMLCrossorigin | undefined;
   fetchPriority?: "high" | "low" | "auto" | undefined;
@@ -55,7 +66,9 @@ function SolidImageSources<T>(props: SolidImageSourcesProps<T>): JSX.Element {
   });
 
   return (
-    <For each={mergedVariants()}>{([type, srcset]) => <source type={type} srcset={srcset} />}</For>
+    <For each={mergedVariants()}>
+      {([type, srcset]) => <source type={type} srcset={srcset} sizes={props.sizes} />}
+    </For>
   );
 }
 
@@ -67,7 +80,9 @@ function SolidImageSources<T>(props: SolidImageSourcesProps<T>): JSX.Element {
 export function SolidImage<T>(props: SolidImageProps<T>): JSX.Element {
   const [showPlaceholder, setShowPlaceholder] = createSignal(true);
   const laze = createLazyRender<HTMLDivElement>();
-  const [defer, setDefer] = createSignal(true);
+  // Without a fallback there is nothing to wait for, so the image
+  // is revealed as soon as it loads.
+  const [defer, setDefer] = createSignal(props.fallback != null);
 
   function onPlaceholderLoad() {
     setDefer(false);
@@ -76,15 +91,25 @@ export function SolidImage<T>(props: SolidImageProps<T>): JSX.Element {
   const width = createMemo(() => props.src.width);
   const height = createMemo(() => props.src.height);
 
+  const boxStyle = createMemo(() => {
+    const style = getAspectRatioBoxStyle({
+      width: width(),
+      height: height(),
+    });
+
+    const placeholder = props.src.placeholder;
+    // Drop the preview once the image is on screen, so a transparent
+    // image does not show it through.
+    if (!placeholder || !showPlaceholder()) {
+      return style;
+    }
+
+    return { ...style, ...getPlaceholderStyle(placeholder) };
+  });
+
   return (
     <div ref={laze.ref} data-solid-image="container">
-      <div
-        data-solid-image="aspect-ratio"
-        style={getAspectRatioBoxStyle({
-          width: width(),
-          height: height(),
-        })}
-      >
+      <div data-solid-image="aspect-ratio" style={boxStyle()}>
         <picture data-solid-image="picture">
           <Show when={props.transformer}>
             {cb => <SolidImageSources variants={createImageVariants(props.src, cb())} {...props} />}
@@ -130,7 +155,9 @@ export function SolidImage<T>(props: SolidImageProps<T>): JSX.Element {
       </div>
       <div data-solid-image="blocker">
         <ClientOnly>
-          <Show when={laze.visible}>{props.fallback(showPlaceholder, onPlaceholderLoad)}</Show>
+          <Show when={laze.visible && props.fallback}>
+            {cb => cb()(showPlaceholder, onPlaceholderLoad)}
+          </Show>
         </ClientOnly>
       </div>
     </div>

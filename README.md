@@ -4,6 +4,7 @@ Optimized image components and Vite tooling for [Solid](https://solidjs.com).
 
 - `SolidImage` renders a responsive `<picture>` that reserves the aspect ratio, so the page does not shift while the image loads.
 - The image loads once it scrolls into view.
+- A tiny preview of the image is inlined in the page and painted behind it, so there is something to look at from the first frame.
 - Your placeholder shows until the image is ready.
 - The Vite plugin resizes and reformats local images at build time.
 - Remote images go through your own URL mapping, so a CDN can serve the variants.
@@ -39,6 +40,7 @@ export default defineConfig({
         sizes: [480, 800, 1200],
         quality: 80,
         publicPath: "public",
+        placeholder: { size: 20 },
       },
     }),
   ],
@@ -155,8 +157,9 @@ The component works on its own. Pass `src` and an optional `transformer`:
 | --- | --- | --- | --- |
 | `src` | `SolidImageSource<T>` | yes | The image, its intrinsic size and any options your transformer needs. |
 | `alt` | `string` | yes | Alternative text. |
-| `fallback` | `(visible: () => boolean, onLoad: () => void) => JSX.Element` | yes | Placeholder shown while the image loads. |
+| `fallback` | `(visible: () => boolean, onLoad: () => void) => JSX.Element` | no | Placeholder shown while the image loads. |
 | `transformer` | `SolidImageTransformer<T>` | no | Produces the responsive variants for `src`. |
+| `sizes` | `string` | no | Value of the `sizes` attribute, such as `50vw`. |
 | `onLoad` | `() => void` | no | Called once the image has loaded and the placeholder is hidden. |
 | `crossOrigin` | `JSX.HTMLCrossorigin` | no | Forwarded to the `<img>`. |
 | `fetchPriority` | `"high" \| "low" \| "auto"` | no | Forwarded to the `<img>`. |
@@ -167,7 +170,15 @@ The `fallback` callback takes two arguments.
 - `visible` is a signal. It is `true` while the placeholder should be shown, and `false` once the image has loaded.
 - `onLoad` tells the component your placeholder is on screen. Call it once the placeholder has mounted. The image is only revealed after that call, so an image that loads instantly never skips the placeholder.
 
-The `fallback` renders on the client only, and only after the container scrolls into view.
+The `fallback` renders on the client only, and only after the container scrolls into view. Leave it out and the image is revealed as soon as it loads.
+
+### Picking the right variant
+
+Width descriptors do not tell the browser how wide the image will be on the page. It assumes the full viewport width and downloads a larger variant than it needs. Pass `sizes` whenever the image is not full width.
+
+```tsx
+<SolidImage {...example} alt="example" sizes="(max-width: 600px) 100vw, 50vw" fallback={...} />
+```
 
 ### Types
 
@@ -177,6 +188,11 @@ interface SolidImageSource<T> {
   width: number;
   height: number;
   options: T;
+}
+
+interface SolidImagePlaceholder {
+  url: string;
+  color: string;
 }
 
 interface SolidImageVariant {
@@ -220,10 +236,14 @@ Handles imports ending in `?image`.
 | `input` | `SolidImageFormat[]` | `["png", "jpeg", "webp"]` | Source formats to process. Other files are left alone. |
 | `output` | `SolidImageFormat[]` | `["png", "jpeg", "webp"]` | Formats to emit. |
 | `publicPath` | `string` | `"dist"` | Directory the processed files are written to. |
+| `placeholder` | `boolean \| { size?: number }` | `true` | Inline preview of the image. Set a `size` in pixels, or `false` to skip it. |
 
 - One file is emitted per output format and per size. `output: ["webp", "jpeg"]` with `sizes: [480, 800]` gives four files per image.
-- Files are written to `<publicPath>/.image/i-<hash>-<width>.<ext>`, and the module exports the URL `/.image/i-<hash>-<width>.<ext>`. The hash is an xxHash32 of the source path.
+- Files are written to `<publicPath>/.image/i-<hash>-<width>.<ext>`, and the module exports the URL `/.image/i-<hash>-<width>.<ext>`.
 - `publicPath` should be served at the root of your site. Add `.image` to `.gitignore` when it sits inside a checked in directory such as `public`.
+- The hash covers the source path, the size and modification time of the source file, the format, the width and the quality.
+- A file that already exists is left alone, so images are encoded once and reused on later builds and dev server restarts.
+- Editing an image or changing an option produces a new name, so a stale file is never served.
 
 #### `options.remote`
 
@@ -233,16 +253,17 @@ Handles imports starting with `image:`.
 | --- | --- | --- |
 | `transformURL` | `(url: string) => MaybePromise<{ src, variants }>` | Maps the text after `image:` to a source and its variants. |
 
-`src` is `{ source, width, height }`. `variants` is one `SolidImageVariant` or an array of them.
+`src` is `{ source, width, height }`, and may carry a `placeholder` of `{ url, color }`. `variants` is one `SolidImageVariant` or an array of them.
 
 ## How it works
 
 1. `SolidImage` renders a padding based aspect ratio box, so the layout is stable before the image arrives.
-2. An `IntersectionObserver` watches the container. Nothing loads until it enters the viewport.
-3. Once visible, the `<img>` and your placeholder render. The image starts transparent.
-4. Your placeholder calls `onLoad` to say it is on screen.
-5. When the image finishes loading after that call, the placeholder is hidden, the image fades in, and the `onLoad` prop fires.
-6. On the server the `<img>` carries a blank SVG of the same size, so nothing is fetched before the image is in view. The placeholder and the loading logic are client only.
+2. The box is painted with the inline preview and the dominant color, when the source carries a placeholder. The preview is a few pixels wide, so the browser scales it up into a blur.
+3. An `IntersectionObserver` watches the container. Nothing loads until it enters the viewport.
+4. Once visible, the `<img>` and your placeholder render. The image starts transparent.
+5. Your placeholder calls `onLoad` to say it is on screen.
+6. When the image finishes loading after that call, the placeholder is hidden, the image fades in over the preview, and the `onLoad` prop fires.
+7. On the server the `<img>` carries a blank SVG of the same size, so nothing is fetched before the image is in view. The placeholder and the loading logic are client only.
 
 Every rendered element carries a `data-solid-image` attribute you can style. The values are `container`, `aspect-ratio`, `picture`, `image` and `blocker`. The shipped stylesheet uses the same attribute.
 
