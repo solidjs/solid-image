@@ -170,6 +170,52 @@ describe("SolidImage in the browser", () => {
     expect(sources[0]!.srcset).toBe(`${PIXEL} 400w,${PIXEL} 800w`);
   });
 
+  it("loads an eager image without waiting for it to scroll into view", async () => {
+    const { host } = mount(() => (
+      <SolidImage
+        src={{ source: PIXEL, width: 100, height: 100, options: {} }}
+        alt="pixel"
+        eager
+        fallback={(visible, show) => (
+          <Show when={visible()}>
+            <Placeholder show={show} />
+          </Show>
+        )}
+      />
+    ));
+
+    // Never scrolled into view, so only `eager` can render this.
+    await expect.poll(() => findImage(host)?.getAttribute("src")).toBe(PIXEL);
+    await expect.poll(() => findImage(host)?.style.opacity).toBe("1");
+  });
+
+  it("gives the img a srcset the browser can pick from", async () => {
+    const { host, scrollIntoView } = mount(() => (
+      <SolidImage
+        src={{ source: PIXEL, width: 1600, height: 900, options: {} }}
+        alt="pixel"
+        transformer={{
+          transform: () => [
+            { path: PIXEL, width: 400, type: "image/webp" },
+            { path: PIXEL, width: 400, type: "image/jpeg" },
+            { path: PIXEL, width: 800, type: "image/jpeg" },
+          ],
+        }}
+        fallback={(visible, show) => (
+          <Show when={visible()}>
+            <Placeholder show={show} />
+          </Show>
+        )}
+      />
+    ));
+
+    scrollIntoView();
+
+    await expect.poll(() => findImage(host)).not.toBe(null);
+
+    expect(findImage(host)!.srcset).toBe(`${PIXEL} 400w,${PIXEL} 800w`);
+  });
+
   it("reserves the aspect ratio before the image loads", () => {
     const { host } = mount(() => (
       <SolidImage
