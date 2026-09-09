@@ -261,13 +261,19 @@ The rendered elements carry a `data-solid-image` attribute you can style. The va
 
 ```bash
 pnpm install
-pnpm build     # bundle with tsdown
-pnpm test      # run the test suite once
+pnpm exec playwright install chromium # once, for the browser tests
+pnpm build        # bundle with tsdown
+pnpm test         # run every test once
+pnpm test:node    # server rendering and Vite plugin only
+pnpm test:browser # browser tests only
 pnpm test:watch
-pnpm changeset # add a changeset before opening a pull request
+pnpm changeset    # add a changeset before opening a pull request
 ```
 
-Tests run under Vitest in a Node environment. Components are checked through `renderToString`, so they cover the server rendering path. The Vite plugin tests call the plugin hooks directly and process real images with sharp.
+The suite is split into two Vitest projects.
+
+- `node` covers server rendering through `renderToString`, and calls the Vite plugin hooks directly with real images processed by sharp.
+- `browser` runs in headless Chromium through Vitest browser mode. It covers the client path, where a real `IntersectionObserver` decides when the image loads and the browser really loads it.
 
 ## License
 
