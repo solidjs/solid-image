@@ -18,6 +18,16 @@ export async function fileExists(p: string): Promise<boolean> {
   }
 }
 
+/**
+ * Returns a string that changes whenever the file changes.
+ * It is part of the name of a processed image, so an edited source
+ * is written to a new file instead of reusing a stale one.
+ */
+export async function getFileSignature(filePath: string): Promise<string> {
+  const stat = await fs.stat(filePath);
+  return `${stat.size}-${stat.mtimeMs}`;
+}
+
 const PATH_FILTER = /[<>:"|?*]/;
 
 export function checkPath(pth: string) {

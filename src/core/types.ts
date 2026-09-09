@@ -36,6 +36,17 @@ export interface SolidImageVariant {
 }
 
 /**
+ * A tiny version of an image, small enough to inline in the page.
+ * It is shown while the real image loads.
+ */
+export interface SolidImagePlaceholder {
+  /** Data URL of the downscaled image. */
+  url: string;
+  /** Dominant color of the image, as a hex string. */
+  color: string;
+}
+
+/**
  * An image source
  */
 export interface SolidImageSource<T> {
@@ -43,6 +54,8 @@ export interface SolidImageSource<T> {
   width: number;
   height: number;
   options: T;
+  /** Inline preview shown until the image has loaded. */
+  placeholder?: SolidImagePlaceholder;
 }
 
 /**
