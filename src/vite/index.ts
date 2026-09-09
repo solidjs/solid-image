@@ -1,3 +1,4 @@
+import fs from "node:fs/promises";
 import path from "node:path";
 import type { Plugin } from "vite";
 import { getFilesFromFormat, getMIMEFromFormat, getOutputFileFromFormat } from "../core/transformer.ts";
@@ -69,19 +70,27 @@ function isValidFileExtension(extensions: Set<string>, target: string): target i
   return extensions.has(target);
 }
 
+/**
+ * Builds the module that carries the image, its intrinsic size and its preview.
+ *
+ * `source` points at the largest variant of the fallback format rather than the
+ * original file, so the untouched original never reaches the bundle.
+ */
 async function getImageSource(
   imagePath: string,
   relativePath: string,
+  fallback: SolidImageFormat,
+  largestSize: number,
   placeholderSize: number | false,
 ): Promise<string> {
-  // TODO add format variation
   const [imageData, placeholder] = await Promise.all([
     getImageData(imagePath),
     placeholderSize === false ? undefined : getPlaceholderData(imagePath, placeholderSize),
   ]);
+  const variantPath = `${relativePath}?image-raw-${fallback}-${largestSize}`;
 
   return `
-import source from ${JSON.stringify(relativePath)};
+import source from ${JSON.stringify(variantPath)};
 export default {
   width: ${JSON.stringify(imageData.width)},
   height: ${JSON.stringify(imageData.height)},
@@ -184,12 +193,26 @@ export default {
         : placeholder === true
           ? DEFAULT_PLACEHOLDER_SIZE
           : (placeholder.size ?? DEFAULT_PLACEHOLDER_SIZE);
+    // The last output format is the least preferred one, so it is the format
+    // every browser is expected to read.
+    const fallbackFormat = outputFormat[outputFormat.length - 1]!;
+    const largestSize = Math.max(...sizes);
 
     const validInputFileExtensions = getValidFileExtensions(inputFormat);
+
+    let isBuild = false;
+    // Replaced by the Vite cache directory once the config is resolved.
+    let cacheDir = path.join("node_modules", ".vite", "solid-image");
 
     plugins.push({
       name: "solid-start:image/local",
       enforce: "pre",
+      configResolved(config) {
+        isBuild = config.command === "build";
+        if (config.cacheDir) {
+          cacheDir = path.join(config.cacheDir, "solid-image");
+        }
+      },
       resolveId(id, importer) {
         if (LOCAL_PATH.test(id) && importer) {
           return path.join(path.dirname(importer), id);
@@ -213,7 +236,13 @@ export default {
         const relativePath = `./${name}.${actualExtension}`;
         // Get the true source
         if (condition.startsWith("image-source")) {
-          return await getImageSource(originalPath, relativePath, placeholderSize);
+          return await getImageSource(
+            originalPath,
+            relativePath,
+            fallbackFormat,
+            largestSize,
+            placeholderSize,
+          );
         }
         // Get the transformer file
         if (condition.startsWith("image-transformer")) {
@@ -229,13 +258,36 @@ export default {
             `${originalPath}|${signature}|${format}|${size}|${quality}`,
           ).toString(16);
           const filename = `i-${hash}-${size}.${getOutputFileFromFormat(format as SolidImageFormat)}`;
+          const encode = () =>
+            transformImage(originalPath, format as SolidImageFormat, +size!, quality).toBuffer();
+
+          // On build the file goes through the bundler, so it picks up `base`,
+          // `assetsDir` and the manifest like any other asset.
+          if (isBuild) {
+            // Nothing is written to the public directory on build, so keep the
+            // encoded file in the Vite cache directory. The next build reads it
+            // back instead of encoding again.
+            const cachePath = path.join(cacheDir, filename);
+            let buffer: Buffer;
+            if (await fileExists(cachePath)) {
+              buffer = await fs.readFile(cachePath);
+            } else {
+              buffer = await encode();
+              await outputFile(cachePath, buffer);
+            }
+            const referenceId = this.emitFile({
+              type: "asset",
+              name: filename,
+              source: buffer,
+            });
+            return `export default import.meta.ROLLUP_FILE_URL_${referenceId};`;
+          }
+
           const basePath = path.join(".image", filename);
           const targetPath = path.join(publicPath, basePath);
           // Encoding is the slow part, so skip it when the file is already there.
           if (!(await fileExists(targetPath))) {
-            const image = transformImage(originalPath, format as SolidImageFormat, +size!, quality);
-            const buffer = await image.toBuffer();
-            await outputFile(targetPath, buffer);
+            await outputFile(targetPath, await encode());
           }
           return `export default "/${basePath}"`;
         }

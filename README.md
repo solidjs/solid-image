@@ -3,8 +3,9 @@
 Optimized image components and Vite tooling for [Solid](https://solidjs.com).
 
 - `SolidImage` renders a responsive `<picture>` that reserves the aspect ratio, so the page does not shift while the image loads.
-- The image loads once it scrolls into view.
+- The image loads once it scrolls into view. Mark the image above the fold as `eager` and it loads right away.
 - A tiny preview of the image is inlined in the page and painted behind it, so there is something to look at from the first frame.
+- Readers with no JavaScript still get the image.
 - Your placeholder shows until the image is ready.
 - The Vite plugin resizes and reformats local images at build time.
 - Remote images go through your own URL mapping, so a CDN can serve the variants.
@@ -159,6 +160,7 @@ The component works on its own. Pass `src` and an optional `transformer`:
 | `alt` | `string` | yes | Alternative text. |
 | `fallback` | `(visible: () => boolean, onLoad: () => void) => JSX.Element` | no | Placeholder shown while the image loads. |
 | `transformer` | `SolidImageTransformer<T>` | no | Produces the responsive variants for `src`. |
+| `eager` | `boolean` | no | Loads the image right away instead of waiting for it to scroll into view. |
 | `sizes` | `string` | no | Value of the `sizes` attribute, such as `50vw`. |
 | `onLoad` | `() => void` | no | Called once the image has loaded and the placeholder is hidden. |
 | `crossOrigin` | `JSX.HTMLCrossorigin` | no | Forwarded to the `<img>`. |
@@ -179,6 +181,16 @@ Width descriptors do not tell the browser how wide the image will be on the page
 ```tsx
 <SolidImage {...example} alt="example" sizes="(max-width: 600px) 100vw, 50vw" fallback={...} />
 ```
+
+### Above the fold
+
+Lazy loading costs time for the first image on the page, because nothing starts until the observer reports. Mark that one image as `eager`.
+
+```tsx
+<SolidImage {...example} alt="example" eager fetchPriority="high" fallback={...} />
+```
+
+The server then renders the real image instead of a blank placeholder, so the browser finds it while it parses the page. Leave every other image lazy.
 
 ### Types
 
@@ -215,6 +227,7 @@ Notes on the shape:
 - `width` and `height` are the intrinsic pixel size. They only reserve the aspect ratio box, so any pair with the right ratio works.
 - Variants are grouped by `type`, and each group becomes one `<source>` with a merged `srcset`.
 - The browser takes the first `<source>` it supports, so order your output formats from most to least preferred.
+- The `<img>` carries the last group as its own `srcset`, for a browser that supports none of the formats above it. Make that group the most widely supported format.
 - Without a transformer no `<source>` is rendered, and the browser loads `src.source`.
 
 ### `imagePlugin(options)`
@@ -239,10 +252,12 @@ Handles imports ending in `?image`.
 | `placeholder` | `boolean \| { size?: number }` | `true` | Inline preview of the image. Set a `size` in pixels, or `false` to skip it. |
 
 - One file is emitted per output format and per size. `output: ["webp", "jpeg"]` with `sizes: [480, 800]` gives four files per image.
-- Files are written to `<publicPath>/.image/i-<hash>-<width>.<ext>`, and the module exports the URL `/.image/i-<hash>-<width>.<ext>`.
+- On build the files go through the bundler as assets, so `base`, `assetsDir` and the build manifest apply to them. Nothing is written to `publicPath`.
+- On the dev server the files are written to `<publicPath>/.image/i-<hash>-<width>.<ext>` and served from `/.image/...`.
 - `publicPath` should be served at the root of your site. Add `.image` to `.gitignore` when it sits inside a checked in directory such as `public`.
+- The `<img>` falls back to the largest size of the last output format. The original file is never imported, so it does not reach the bundle.
 - The hash covers the source path, the size and modification time of the source file, the format, the width and the quality.
-- A file that already exists is left alone, so images are encoded once and reused on later builds and dev server restarts.
+- An image is encoded once and reused. The dev server reuses the file in `publicPath`. A build reuses its copy in the Vite cache directory.
 - Editing an image or changing an option produces a new name, so a stale file is never served.
 
 #### `options.remote`
@@ -263,7 +278,8 @@ Handles imports starting with `image:`.
 4. Once visible, the `<img>` and your placeholder render. The image starts transparent.
 5. Your placeholder calls `onLoad` to say it is on screen.
 6. When the image finishes loading after that call, the placeholder is hidden, the image fades in over the preview, and the `onLoad` prop fires.
-7. On the server the `<img>` carries a blank SVG of the same size, so nothing is fetched before the image is in view. The placeholder and the loading logic are client only.
+7. On the server a lazy `<img>` carries a blank SVG of the same size, so nothing is fetched before the image is in view. An eager `<img>` renders in full. The placeholder and the loading logic are client only.
+8. The server also renders a `<noscript>` copy of the image, so a reader with no JavaScript sees it. Browsers never load the content of a `<noscript>` element, so it costs nothing otherwise.
 
 Every rendered element carries a `data-solid-image` attribute you can style. The values are `container`, `aspect-ratio`, `picture`, `image` and `blocker`. The shipped stylesheet uses the same attribute.
 

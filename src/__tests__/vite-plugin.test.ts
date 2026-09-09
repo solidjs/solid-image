@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import sharp from "sharp";
 import type { Plugin } from "vite";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { imagePlugin } from "../vite/index";
 import type { SolidImageOptions } from "../vite/index";
 
@@ -15,10 +15,16 @@ function callResolveId(plugin: Plugin, id: string, importer?: string) {
   return fn.call({} as any, id, importer, {});
 }
 
-function callLoad(plugin: Plugin, id: string) {
+function callLoad(plugin: Plugin, id: string, context: unknown = {}) {
   const hook = plugin.load as any;
   const fn = typeof hook === "function" ? hook : hook.handler;
-  return fn.call({} as any, id, {});
+  return fn.call(context as any, id, {});
+}
+
+function callConfigResolved(plugin: Plugin, command: "build" | "serve", cacheDir?: string) {
+  const hook = plugin.configResolved as any;
+  const fn = typeof hook === "function" ? hook : hook.handler;
+  fn.call({} as any, { command, cacheDir } as any);
 }
 
 function getPlugin(plugins: Plugin[], name: string): Plugin {
@@ -207,7 +213,15 @@ describe("local images", () => {
 
     expect(code).toContain("width: 64");
     expect(code).toContain("height: 32");
-    expect(code).toContain('import source from "./photo.png"');
+  });
+
+  it("points the source at the largest variant of the fallback format", async () => {
+    const plugin = createLocalPlugin({ output: ["webp", "jpeg"], sizes: [400, 800] });
+    const code: string = await callLoad(plugin, path.join(dir, "photo.png?image-source"));
+
+    // jpeg is last in the output list, so it is the format every browser reads.
+    expect(code).toContain('import source from "./photo.png?image-raw-jpeg-800"');
+    expect(code).not.toContain('import source from "./photo.png"');
   });
 
   it("inlines a placeholder preview and the dominant color", async () => {
@@ -288,6 +302,62 @@ describe("local images", () => {
     const meta = await sharp(emitted).metadata();
     expect(meta.format).toBe("webp");
     expect(meta.width).toBe(400);
+  });
+
+  it("emits the file through the bundler on build", async () => {
+    const plugin = createLocalPlugin();
+    callConfigResolved(plugin, "build", path.join(dir, "cache"));
+
+    const emitFile = vi.fn((_asset: { type: string; name: string; source: Buffer }) => "abc123");
+    const code: string = await callLoad(
+      plugin,
+      path.join(dir, "photo.png?image-raw-webp-400"),
+      { emitFile },
+    );
+
+    // Going through the bundler is what makes `base`, `assetsDir` and the
+    // manifest apply to these files.
+    expect(code).toBe("export default import.meta.ROLLUP_FILE_URL_abc123;");
+    expect(emitFile).toHaveBeenCalledTimes(1);
+
+    const emitted = emitFile.mock.calls[0]![0];
+    expect(emitted.type).toBe("asset");
+    expect(emitted.name).toMatch(/^i-[0-9a-f]+-400\.webp$/);
+
+    const meta = await sharp(emitted.source).metadata();
+    expect(meta.format).toBe("webp");
+    expect(meta.width).toBe(400);
+  });
+
+  it("reuses the encoded file from the cache on the next build", async () => {
+    const cacheDir = path.join(dir, "build-cache");
+    const plugin = createLocalPlugin();
+    callConfigResolved(plugin, "build", cacheDir);
+
+    const first = vi.fn((_asset: { name: string; source: Buffer }) => "first");
+    await callLoad(plugin, path.join(dir, "photo.png?image-raw-webp-400"), { emitFile: first });
+
+    // The plugin keeps its files in a folder of its own inside the Vite cache directory.
+    const cachePath = path.join(cacheDir, "solid-image", first.mock.calls[0]![0].name);
+    await fs.writeFile(cachePath, "cached bytes");
+
+    const second = vi.fn((_asset: { name: string; source: Buffer }) => "second");
+    await callLoad(plugin, path.join(dir, "photo.png?image-raw-webp-400"), { emitFile: second });
+
+    // The second build emitted the cached bytes, so nothing was encoded again.
+    expect(second.mock.calls[0]![0].source.toString()).toBe("cached bytes");
+  });
+
+  it("does not write to the public directory on build", async () => {
+    const buildPublicPath = path.join(dir, "build-public");
+    const plugin = createLocalPlugin({ publicPath: buildPublicPath });
+    callConfigResolved(plugin, "build", path.join(dir, "cache"));
+
+    await callLoad(plugin, path.join(dir, "photo.png?image-raw-webp-400"), {
+      emitFile: () => "abc123",
+    });
+
+    await expect(fs.stat(buildPublicPath)).rejects.toThrow();
   });
 
   it("uses the jpg extension for jpeg output", async () => {
