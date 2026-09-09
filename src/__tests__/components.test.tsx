@@ -129,6 +129,84 @@ describe("SolidImage SSR", () => {
     expect(html).toContain(encodeURIComponent('width="800"'));
   });
 
+  it("renders without a fallback", () => {
+    const html = renderToString(() => (
+      <SolidImage
+        src={{ source: "/hero.png", width: 100, height: 100, options: {} }}
+        alt="hero"
+      />
+    ));
+
+    expect(html).toContain('data-solid-image="container"');
+    expect(html).toContain('data-solid-image="blocker"');
+  });
+
+  it("puts the sizes attribute on every source", () => {
+    const html = renderToString(() => (
+      <SolidImage
+        src={{ source: "/hero.png", width: 1600, height: 900, options: {} }}
+        alt="hero"
+        sizes="(max-width: 600px) 100vw, 50vw"
+        transformer={{
+          transform: () => [
+            { path: "/hero-400.webp", width: 400, type: "image/webp" },
+            { path: "/hero-400.jpg", width: 400, type: "image/jpeg" },
+          ],
+        }}
+        fallback={() => <div>loading</div>}
+      />
+    ));
+
+    expect([...html.matchAll(/sizes="\(max-width: 600px\) 100vw, 50vw"/g)]).toHaveLength(2);
+  });
+
+  it("omits the sizes attribute when no value is given", () => {
+    const html = renderToString(() => (
+      <SolidImage
+        src={{ source: "/hero.png", width: 1600, height: 900, options: {} }}
+        alt="hero"
+        transformer={{
+          transform: () => [{ path: "/hero-400.webp", width: 400, type: "image/webp" }],
+        }}
+        fallback={() => <div>loading</div>}
+      />
+    ));
+
+    expect(html).not.toContain("sizes=");
+  });
+
+  it("paints the inline placeholder behind the image", () => {
+    const html = renderToString(() => (
+      <SolidImage
+        src={{
+          source: "/hero.png",
+          width: 1600,
+          height: 900,
+          options: {},
+          placeholder: { url: "data:image/webp;base64,AAA", color: "#336699" },
+        }}
+        alt="hero"
+        fallback={() => <div>loading</div>}
+      />
+    ));
+
+    expect(html).toContain("background-color:#336699");
+    expect(html).toContain("background-image:url(&quot;data:image/webp;base64,AAA&quot;)");
+    expect(html).toContain("background-size:cover");
+  });
+
+  it("renders no placeholder background when the source has none", () => {
+    const html = renderToString(() => (
+      <SolidImage
+        src={{ source: "/hero.png", width: 1600, height: 900, options: {} }}
+        alt="hero"
+        fallback={() => <div>loading</div>}
+      />
+    ));
+
+    expect(html).not.toContain("background-image");
+  });
+
   it("renders one <source> per MIME type with a srcset", () => {
     const html = renderToString(() => (
       <SolidImage

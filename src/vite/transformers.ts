@@ -36,6 +36,38 @@ export function transformImage(
   }
 }
 
+export interface PlaceholderData {
+  url: string;
+  color: string;
+}
+
+function toHex(value: number): string {
+  return value.toString(16).padStart(2, "0");
+}
+
+/**
+ * Builds a preview small enough to inline in the page.
+ * The image is downscaled to a few pixels and encoded as a data URL,
+ * together with the dominant color of the original.
+ */
+export async function getPlaceholderData(
+  originalPath: string,
+  size: number,
+): Promise<PlaceholderData> {
+  const input = sharp(originalPath);
+  const [buffer, stats] = await Promise.all([
+    input.clone().resize(size).webp({ quality: 40 }).toBuffer(),
+    input.clone().stats(),
+  ]);
+
+  const { r, g, b } = stats.dominant;
+
+  return {
+    url: `data:image/webp;base64,${buffer.toString("base64")}`,
+    color: `#${toHex(r)}${toHex(g)}${toHex(b)}`,
+  };
+}
+
 interface ImageData {
   width: number;
   height: number;

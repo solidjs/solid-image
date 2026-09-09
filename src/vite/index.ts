@@ -1,15 +1,23 @@
 import path from "node:path";
 import type { Plugin } from "vite";
 import { getFilesFromFormat, getMIMEFromFormat, getOutputFileFromFormat } from "../core/transformer.ts";
-import type { SolidImageFile, SolidImageFormat, SolidImageVariant } from "../core/types.ts";
-import { outputFile } from "./fs.ts";
-import { getImageData, transformImage } from "./transformers.ts";
+import type {
+  SolidImageFile,
+  SolidImageFormat,
+  SolidImagePlaceholder,
+  SolidImageVariant,
+} from "../core/types.ts";
+import { fileExists, getFileSignature, outputFile } from "./fs.ts";
+import { getImageData, getPlaceholderData, transformImage } from "./transformers.ts";
 import xxHash32 from "./xxhash32.ts";
 
 const DEFAULT_INPUT: SolidImageFormat[] = ["png", "jpeg", "webp"];
 const DEFAULT_OUTPUT: SolidImageFormat[] = ["png", "jpeg", "webp"];
 // sharp takes a quality from 1 to 100.
 const DEFAULT_QUALITY = 80;
+// Width of the inline preview, in pixels. Small enough to stay under a
+// kilobyte once encoded, large enough to show the shape of the image.
+const DEFAULT_PLACEHOLDER_SIZE = 20;
 
 type MaybePromise<T> = T | Promise<T>;
 
@@ -26,6 +34,11 @@ export interface SolidImageOptions {
     quality?: number;
     /** Directory the processed files are written to. Defaults to `dist`. */
     publicPath?: string;
+    /**
+     * Inline preview shown until the image has loaded.
+     * Set to `false` to skip it, or give a width in pixels. Defaults to 20.
+     */
+    placeholder?: boolean | { size?: number };
   };
   /** Handles imports that start with `image:`. */
   remote?: {
@@ -35,6 +48,7 @@ export interface SolidImageOptions {
         source: string;
         width: number;
         height: number;
+        placeholder?: SolidImagePlaceholder;
       };
       variants: SolidImageVariant | SolidImageVariant[];
     }>;
@@ -55,14 +69,23 @@ function isValidFileExtension(extensions: Set<string>, target: string): target i
   return extensions.has(target);
 }
 
-async function getImageSource(imagePath: string, relativePath: string): Promise<string> {
+async function getImageSource(
+  imagePath: string,
+  relativePath: string,
+  placeholderSize: number | false,
+): Promise<string> {
   // TODO add format variation
-  const imageData = await getImageData(imagePath);
+  const [imageData, placeholder] = await Promise.all([
+    getImageData(imagePath),
+    placeholderSize === false ? undefined : getPlaceholderData(imagePath, placeholderSize),
+  ]);
+
   return `
 import source from ${JSON.stringify(relativePath)};
 export default {
   width: ${JSON.stringify(imageData.width)},
   height: ${JSON.stringify(imageData.height)},
+  placeholder: ${JSON.stringify(placeholder)},
   source,
 };
 `;
@@ -154,6 +177,13 @@ export default {
     const quality = options.local.quality ?? DEFAULT_QUALITY;
     const sizes = options.local.sizes;
     const publicPath = options.local.publicPath ?? "dist";
+    const placeholder = options.local.placeholder ?? true;
+    const placeholderSize =
+      placeholder === false
+        ? false
+        : placeholder === true
+          ? DEFAULT_PLACEHOLDER_SIZE
+          : (placeholder.size ?? DEFAULT_PLACEHOLDER_SIZE);
 
     const validInputFileExtensions = getValidFileExtensions(inputFormat);
 
@@ -183,7 +213,7 @@ export default {
         const relativePath = `./${name}.${actualExtension}`;
         // Get the true source
         if (condition.startsWith("image-source")) {
-          return await getImageSource(originalPath, relativePath);
+          return await getImageSource(originalPath, relativePath, placeholderSize);
         }
         // Get the transformer file
         if (condition.startsWith("image-transformer")) {
@@ -192,13 +222,21 @@ export default {
         // Image transformer variant
         if (condition.startsWith("image-raw")) {
           const [, , format, size] = condition.split("-");
-          const hash = xxHash32(originalPath).toString(16);
+          // The name covers everything that changes the output, so an edited
+          // image or a changed option never reuses a stale file.
+          const signature = await getFileSignature(originalPath);
+          const hash = xxHash32(
+            `${originalPath}|${signature}|${format}|${size}|${quality}`,
+          ).toString(16);
           const filename = `i-${hash}-${size}.${getOutputFileFromFormat(format as SolidImageFormat)}`;
-          const image = transformImage(originalPath, format as SolidImageFormat, +size!, quality);
-          const buffer = await image.toBuffer();
           const basePath = path.join(".image", filename);
           const targetPath = path.join(publicPath, basePath);
-          await outputFile(targetPath, buffer);
+          // Encoding is the slow part, so skip it when the file is already there.
+          if (!(await fileExists(targetPath))) {
+            const image = transformImage(originalPath, format as SolidImageFormat, +size!, quality);
+            const buffer = await image.toBuffer();
+            await outputFile(targetPath, buffer);
+          }
           return `export default "/${basePath}"`;
         }
         // Image transformer variant

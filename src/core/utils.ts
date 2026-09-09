@@ -1,5 +1,6 @@
 import type { JSX } from "solid-js";
 import type { AspectRatio } from "./aspect-ratio";
+import type { SolidImagePlaceholder } from "./types";
 
 function kebabify(str: string): string {
   return str
@@ -35,6 +36,19 @@ export function getAspectRatioBoxStyle(ratio: AspectRatio): JSX.CSSProperties {
     width: "100%",
     height: "0",
     overflow: "hidden",
+  };
+}
+
+/**
+ * Style that paints the inline preview behind the image.
+ * The preview is a few pixels wide, so the browser scales it up and blurs it.
+ */
+export function getPlaceholderStyle(placeholder: SolidImagePlaceholder): JSX.CSSProperties {
+  return {
+    "background-color": placeholder.color,
+    "background-image": `url("${placeholder.url}")`,
+    "background-size": "cover",
+    "background-position": "center",
   };
 }
 
