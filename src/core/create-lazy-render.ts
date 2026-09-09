@@ -9,6 +9,11 @@ export interface LazyRenderOptions {
   refresh?: boolean;
 }
 
+/**
+ * Tracks whether the host element is in the viewport.
+ * Set `refresh` to keep watching after the first intersection,
+ * so `visible` also turns false when the element leaves the viewport.
+ */
 export function createLazyRender<T extends HTMLElement>(
   options?: LazyRenderOptions,
 ): LazyRender<T> {

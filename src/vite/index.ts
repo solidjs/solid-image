@@ -8,19 +8,28 @@ import xxHash32 from "./xxhash32.ts";
 
 const DEFAULT_INPUT: SolidImageFormat[] = ["png", "jpeg", "webp"];
 const DEFAULT_OUTPUT: SolidImageFormat[] = ["png", "jpeg", "webp"];
-const DEFAULT_QUALITY = 0.8;
+// sharp takes a quality from 1 to 100.
+const DEFAULT_QUALITY = 80;
 
 type MaybePromise<T> = T | Promise<T>;
 
 export interface SolidImageOptions {
+  /** Handles imports that end with `?image`. */
   local?: {
+    /** Output widths in pixels. The height follows the aspect ratio. */
     sizes: number[];
+    /** Source formats to process. Other files are left alone. Defaults to png, jpeg and webp. */
     input?: SolidImageFormat[];
+    /** Formats to emit. One file is written per format and per size. Defaults to png, jpeg and webp. */
     output?: SolidImageFormat[];
-    quality: number;
+    /** Quality passed to sharp, from 1 to 100. Defaults to 80. */
+    quality?: number;
+    /** Directory the processed files are written to. Defaults to `dist`. */
     publicPath?: string;
   };
+  /** Handles imports that start with `image:`. */
   remote?: {
+    /** Maps the text after `image:` to a source and its variants. May be async. */
     transformURL(url: string): MaybePromise<{
       src: {
         source: string;
@@ -101,6 +110,11 @@ export default { src, transformer };
 const LOCAL_PATH = /\?image(-[a-z]+(-[0-9]+)?)?/;
 const REMOTE_PATH = "image:";
 
+/**
+ * Vite plugins that turn image imports into responsive image props.
+ * Returns one plugin per enabled option group, so it can be spread
+ * or nested in the Vite `plugins` array.
+ */
 export const imagePlugin = (options: SolidImageOptions) => {
   const plugins: Plugin[] = [];
   if (options.remote) {
