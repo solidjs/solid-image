@@ -4,7 +4,7 @@ import path from "node:path";
 import sharp from "sharp";
 import type { Plugin } from "vite";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { imagePlugin } from "../vite/index";
+import { getEffectiveSizes, imagePlugin } from "../vite/index";
 import type { SolidImageOptions } from "../vite/index";
 
 // Vite hooks can be a function or an object with a handler.
@@ -21,10 +21,15 @@ function callLoad(plugin: Plugin, id: string, context: unknown = {}) {
   return fn.call(context as any, id, {});
 }
 
-function callConfigResolved(plugin: Plugin, command: "build" | "serve", cacheDir?: string) {
+function callConfigResolved(
+  plugin: Plugin,
+  command: "build" | "serve",
+  cacheDir?: string,
+  publicDir?: string,
+) {
   const hook = plugin.configResolved as any;
   const fn = typeof hook === "function" ? hook : hook.handler;
-  fn.call({} as any, { command, cacheDir } as any);
+  fn.call({} as any, { command, cacheDir, publicDir } as any);
 }
 
 function getPlugin(plugins: Plugin[], name: string): Plugin {
@@ -153,7 +158,7 @@ describe("local images", () => {
     imagePath = path.join(dir, "photo.png");
 
     await sharp({
-      create: { width: 64, height: 32, channels: 3, background: "#336699" },
+      create: { width: 1200, height: 600, channels: 3, background: "#336699" },
     })
       .png()
       .toFile(imagePath);
@@ -211,8 +216,8 @@ describe("local images", () => {
     const plugin = createLocalPlugin();
     const code: string = await callLoad(plugin, path.join(dir, "photo.png?image-source"));
 
-    expect(code).toContain("width: 64");
-    expect(code).toContain("height: 32");
+    expect(code).toContain("width: 1200");
+    expect(code).toContain("height: 600");
   });
 
   it("points the source at the largest variant of the fallback format", async () => {
@@ -425,6 +430,69 @@ describe("local images", () => {
     expect(first).not.toBe(second);
   });
 
+  it("drops sizes wider than the source and adds the source width", async () => {
+    const smallPath = path.join(dir, "small.png");
+    await sharp({ create: { width: 600, height: 300, channels: 3, background: "#336699" } })
+      .png()
+      .toFile(smallPath);
+
+    const plugin = createLocalPlugin({ output: ["webp"], sizes: [400, 800, 1200] });
+    const code: string = await callLoad(plugin, path.join(dir, "small.png?image-transformer"));
+
+    expect(code).toContain('"./small.png?image-webp-400"');
+    expect(code).toContain('"./small.png?image-webp-600"');
+    expect(code).not.toContain("image-webp-800");
+    expect(code).not.toContain("image-webp-1200");
+  });
+
+  it("points the source at the source width when every size is too wide", async () => {
+    const smallPath = path.join(dir, "tiny.png");
+    await sharp({ create: { width: 300, height: 150, channels: 3, background: "#336699" } })
+      .png()
+      .toFile(smallPath);
+
+    const plugin = createLocalPlugin({ output: ["jpeg"], sizes: [800, 1200] });
+    const code: string = await callLoad(plugin, path.join(dir, "tiny.png?image-source"));
+
+    expect(code).toContain('import source from "./tiny.png?image-raw-jpeg-300"');
+  });
+
+  it("gives the same file name to the same content at another path and time", async () => {
+    const copyPath = path.join(dir, "copy.png");
+    await fs.copyFile(path.join(dir, "photo.png"), copyPath);
+    // A fresh checkout gives every file a new modification time.
+    await fs.utimes(copyPath, new Date(2001, 0, 1), new Date(2001, 0, 1));
+
+    const plugin = createLocalPlugin();
+    const original: string = await callLoad(plugin, path.join(dir, "photo.png?image-raw-webp-400"));
+    const copy: string = await callLoad(plugin, path.join(dir, "copy.png?image-raw-webp-400"));
+
+    expect(copy).toBe(original);
+  });
+
+  it("writes to Vite's public directory when no publicPath is given", async () => {
+    const publicDir = path.join(dir, "vite-public");
+    const plugin = createLocalPlugin({ publicPath: undefined });
+    callConfigResolved(plugin, "serve", path.join(dir, "cache"), publicDir);
+
+    const code: string = await callLoad(plugin, path.join(dir, "photo.png?image-raw-webp-400"));
+    const publicUrl = /export default "(.+)"/.exec(code)![1]!;
+
+    expect((await fs.stat(path.join(publicDir, publicUrl))).isFile()).toBe(true);
+  });
+
+  it("keeps an explicit publicPath over Vite's public directory", async () => {
+    const publicDir = path.join(dir, "ignored-public");
+    const plugin = createLocalPlugin();
+    callConfigResolved(plugin, "serve", path.join(dir, "cache"), publicDir);
+
+    const code: string = await callLoad(plugin, path.join(dir, "photo.png?image-raw-webp-400"));
+    const publicUrl = /export default "(.+)"/.exec(code)![1]!;
+
+    expect((await fs.stat(path.join(publicPath, publicUrl))).isFile()).toBe(true);
+    await expect(fs.stat(publicDir)).rejects.toThrow();
+  });
+
   it("ignores a file extension that is not in the input list", async () => {
     const plugin = createLocalPlugin({ input: ["jpeg"] });
 
@@ -469,5 +537,23 @@ describe("local images", () => {
     expect(code).toContain("variant_png_400");
     expect(code).toContain("variant_jpeg_400");
     expect(code).toContain("variant_webp_400");
+  });
+});
+
+describe("getEffectiveSizes", () => {
+  it("keeps every size that fits inside the source", () => {
+    expect(getEffectiveSizes([400, 800], 1200)).toEqual([400, 800]);
+  });
+
+  it("replaces sizes wider than the source with the source width", () => {
+    expect(getEffectiveSizes([400, 800, 1200], 600)).toEqual([400, 600]);
+  });
+
+  it("keeps a size equal to the source width once", () => {
+    expect(getEffectiveSizes([600, 1200], 600)).toEqual([600]);
+  });
+
+  it("keeps the sizes as given when the source width is unknown", () => {
+    expect(getEffectiveSizes([400, 400, 800], 0)).toEqual([400, 800]);
   });
 });

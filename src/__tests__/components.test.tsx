@@ -269,7 +269,8 @@ describe("SolidImage SSR", () => {
       />
     ));
 
-    expect(html).not.toContain("loading");
+    // Match the fallback element itself. The noscript image has a loading attribute.
+    expect(html).not.toContain("<div>loading</div>");
   });
 
   it("gives the img a srcset from the least preferred format", () => {
@@ -290,7 +291,8 @@ describe("SolidImage SSR", () => {
     ));
 
     // Without this the browser falls back to the full size original.
-    expect(html).toContain('srcset="/hero-400.jpg 400w,/hero-800.jpg 800w" alt="hero"');
+    const img = /<img(?![^>]*data:image)[^>]*>/.exec(html)![0];
+    expect(img).toContain('srcset="/hero-400.jpg 400w,/hero-800.jpg 800w"');
   });
 
   it("gives the img no srcset when there is no transformer", () => {
@@ -343,6 +345,36 @@ describe("SolidImage SSR", () => {
     expect(noscript).toContain('src="/hero.png"');
     expect(noscript).toContain('srcset="/hero-400.jpg 400w"');
     expect(noscript).toContain('alt="hero"');
+  });
+
+  it("gives every img its intrinsic width and height", () => {
+    const html = renderToString(() => (
+      <SolidImage
+        src={{ source: "/hero.png", width: 1600, height: 900, options: {} }}
+        alt="hero"
+        fallback={() => <div>loading</div>}
+      />
+    ));
+
+    // The lazy placeholder and the noscript copy both carry the size.
+    expect([...html.matchAll(/<img[^>]*width="1600"[^>]*height="900"/g)]).toHaveLength(2);
+  });
+
+  it("lets the browser defer the noscript image", () => {
+    const html = renderToString(() => (
+      <SolidImage
+        src={{ source: "/hero.png", width: 100, height: 100, options: {} }}
+        alt="hero"
+        fallback={() => <div>loading</div>}
+      />
+    ));
+
+    const noscript = /<noscript[^>]*>(.*?)<\/noscript>/s.exec(html)![1]!;
+    expect(noscript).toContain('loading="lazy"');
+
+    // The visible img is still lazy loaded by the observer, not the browser.
+    const outsideNoscript = html.replace(/<noscript[^>]*>.*?<\/noscript>/gs, "");
+    expect(outsideNoscript).not.toContain("loading=");
   });
 
   it("marks the container, aspect ratio box, picture and blocker elements", () => {
