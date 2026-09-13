@@ -3,8 +3,13 @@ import os from "node:os";
 import path from "node:path";
 import sharp from "sharp";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { decode, encode, isBlurhashValid } from "blurhash";
-import { getBlurhashData, getImageData, transformImage } from "../vite/transformers";
+import { encode, isBlurhashValid } from "blurhash";
+import {
+  getBlurhashComponents,
+  getBlurhashData,
+  getImageData,
+  transformImage,
+} from "../vite/transformers";
 
 let dir: string;
 let imagePath: string;
@@ -101,61 +106,85 @@ describe("transformImage", () => {
   });
 });
 
-describe("getBlurhashData", () => {
-  it("encodes a valid BlurHash with the requested components", async () => {
-    const { hash } = await getBlurhashData(imagePath, encode, 3, 2);
+// BlurHash writes every value in base 83 with this alphabet.
+const BASE83 =
+  "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz#$%*+,-.:;=?@[]^_{|}~";
 
-    expect(isBlurhashValid(hash).result).toBe(true);
-    expect(hash).toHaveLength(4 + 2 * 3 * 2);
+function readBase83(value: string) {
+  return [...value].reduce((total, character) => total * 83 + BASE83.indexOf(character), 0);
+}
+
+// The first character of a hash holds its component counts.
+function readComponents(hash: string): [number, number] {
+  const flag = readBase83(hash[0]!);
+  return [(flag % 9) + 1, Math.floor(flag / 9) + 1];
+}
+
+describe("getBlurhashComponents", () => {
+  it.each([
+    ["4:3 landscape", 4, 3, [4, 3]],
+    ["16:9", 16, 9, [5, 3]],
+    ["square", 1, 1, [3, 3]],
+    ["9:16 portrait", 9, 16, [3, 5]],
+    ["3:1 panorama", 3, 1, [6, 2]],
+    ["10:1 banner", 10, 1, [9, 1]],
+    ["1:10 strip", 1, 10, [1, 9]],
+  ])("splits the components for a %s image", (_name, width, height, expected) => {
+    expect(getBlurhashComponents(width as number, height as number)).toEqual(expected);
   });
 
-  it("reports the average color, which is the color the hash encodes", async () => {
-    const { color } = await getBlurhashData(imagePath, encode, 4, 3);
-    expect(color).toBe("#112233");
+  it("keeps every count within the 1 to 9 BlurHash allows", () => {
+    expect(getBlurhashComponents(1000, 1)).toEqual([9, 1]);
+    expect(getBlurhashComponents(1, 1000)).toEqual([1, 9]);
+  });
 
-    // With one component the hash keeps only its base color, so it decodes
-    // exactly. More components add detail terms that BlurHash rounds, which
-    // shifts a flat image by a few levels.
-    const { hash } = await getBlurhashData(imagePath, encode, 1, 1);
-    const pixels = decode(hash, 4, 4);
-    for (let i = 0; i < pixels.length; i += 4) {
-      expect([pixels[i], pixels[i + 1], pixels[i + 2]]).toEqual([0x11, 0x22, 0x33]);
-    }
+  it("falls back to 4 by 3 when the size is unknown", () => {
+    expect(getBlurhashComponents(0, 0)).toEqual([4, 3]);
+  });
+});
+
+describe("getBlurhashData", () => {
+  it("encodes a valid BlurHash with components picked from the aspect ratio", async () => {
+    const { hash } = await getBlurhashData(imagePath, encode);
+
+    expect(isBlurhashValid(hash).result).toBe(true);
+    // The 800 by 400 source has a ratio of 2.
+    expect(readComponents(hash)).toEqual([5, 2]);
+  });
+
+  it("reports the average color, which is the base color of the hash", async () => {
+    const { hash, color } = await getBlurhashData(imagePath, encode);
+
+    expect(color).toBe("#112233");
+    // Characters 2 to 5 hold the base color as a 24 bit number.
+    expect(readBase83(hash.slice(2, 6))).toBe(0x112233);
   });
 
   it("encodes a rotated photo upright", async () => {
     const seen: [number, number][] = [];
 
-    await getBlurhashData(
-      rotatedPath,
-      (pixels, width, height, componentX, componentY) => {
-        seen.push([width, height]);
-        return encode(pixels, width, height, componentX, componentY);
-      },
-      4,
-      3,
-    );
+    const { hash } = await getBlurhashData(rotatedPath, (pixels, width, height, x, y) => {
+      seen.push([width, height]);
+      return encode(pixels, width, height, x, y);
+    });
 
     // Stored as 64 by 32 with orientation 6, so it displays as 32 by 64.
     expect(seen).toEqual([[16, 32]]);
+    // A portrait gets more vertical components.
+    expect(readComponents(hash)).toEqual([2, 5]);
   });
 
   it("encodes a small copy instead of every pixel", async () => {
-    const seen: [number, number][] = [];
+    const seen: [number, number, number, number][] = [];
 
-    await getBlurhashData(
-      imagePath,
-      (pixels, width, height, componentX, componentY) => {
-        seen.push([width, height]);
-        expect(pixels.length).toBe(width * height * 4);
-        return encode(pixels, width, height, componentX, componentY);
-      },
-      4,
-      3,
-    );
+    await getBlurhashData(imagePath, (pixels, width, height, x, y) => {
+      seen.push([width, height, x, y]);
+      expect(pixels.length).toBe(width * height * 4);
+      return encode(pixels, width, height, x, y);
+    });
 
     // The 800 by 400 source is reduced to fit inside 32 pixels.
-    expect(seen).toEqual([[32, 16]]);
+    expect(seen).toEqual([[32, 16, 5, 2]]);
   });
 });
 

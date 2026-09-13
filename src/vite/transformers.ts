@@ -88,15 +88,37 @@ export type BlurhashEncode = (
 // only a few components, so more pixels cost time and add no detail.
 const BLURHASH_SAMPLE_SIZE = 32;
 
+// Total components a hash aims for. 4 by 3 is the usual BlurHash default, and
+// staying near that total keeps hashes near 28 characters.
+const BLURHASH_COMPONENT_BUDGET = 12;
+
+/**
+ * Picks the horizontal and vertical component counts for an image.
+ * The budget is split by aspect ratio, so the long side gets more components
+ * and detail stays even. Each count stays within the 1 to 9 BlurHash allows.
+ */
+export function getBlurhashComponents(width: number, height: number): [x: number, y: number] {
+  if (!(width > 0 && height > 0)) {
+    return [4, 3];
+  }
+
+  const ratio = width / height;
+  const clamp = (value: number) => Math.min(9, Math.max(1, Math.round(value)));
+
+  return [
+    clamp(Math.sqrt(BLURHASH_COMPONENT_BUDGET * ratio)),
+    clamp(Math.sqrt(BLURHASH_COMPONENT_BUDGET / ratio)),
+  ];
+}
+
 /**
  * Encodes an image as a BlurHash, together with its average color.
+ * The component counts come from the aspect ratio of the image.
  * The encoder is passed in because `blurhash` is an optional dependency.
  */
 export async function getBlurhashData(
   originalPath: string,
   encode: BlurhashEncode,
-  componentX: number,
-  componentY: number,
 ): Promise<BlurhashData> {
   const { data, info } = await sharp(originalPath)
     // Hash the photo as it displays, like the variants and the inline preview.
@@ -117,6 +139,8 @@ export async function getBlurhashData(
   const count = info.width * info.height;
 
   const pixels = new Uint8ClampedArray(data.buffer, data.byteOffset, data.byteLength);
+  // The sample keeps the aspect ratio of the image, so its size is enough.
+  const [componentX, componentY] = getBlurhashComponents(info.width, info.height);
 
   return {
     hash: encode(pixels, info.width, info.height, componentX, componentY),

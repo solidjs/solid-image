@@ -289,7 +289,7 @@ imagePlugin({
 ```
 
 - `blurhash` is an optional peer dependency. Install it yourself. The plugin fails at startup with install steps when it is missing.
-- `componentX` and `componentY` set how much detail the hash keeps. Each goes from 1 to 9, and the defaults are 4 and 3.
+- The number of components is picked per image from its aspect ratio, about 12 in total. The long side gets more, so portraits and landscapes keep even detail.
 - The server paints the average color of the image. The browser decodes the hash into a 32px wide canvas and paints it over that color.
 - Only apps that turn it on import `blurhash`. The component itself never does.
 

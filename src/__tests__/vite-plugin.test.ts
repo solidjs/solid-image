@@ -573,6 +573,15 @@ describe("blurhash placeholder", () => {
     );
   }
 
+  // The first character of a hash holds its component counts, in base 83.
+  function readComponents(hash: string): [number, number] {
+    const flag =
+      "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz#$%*+,-.:;=?@[]^_{|}~".indexOf(
+        hash[0]!,
+      );
+    return [(flag % 9) + 1, Math.floor(flag / 9) + 1];
+  }
+
   function readPlaceholder(code: string) {
     return JSON.parse(/placeholder: \{ \.\.\.(\{.+?\}), decode \}/.exec(code)![1]!);
   }
@@ -587,29 +596,27 @@ describe("blurhash placeholder", () => {
 
     const placeholder = readPlaceholder(code);
     expect(isBlurhashValid(placeholder.hash).result).toBe(true);
-    // 4 characters of header, then 2 for each component. The default is 4 by 3.
-    expect(placeholder.hash).toHaveLength(4 + 2 * 4 * 3);
+    // The 320 by 180 fixture is 16:9, which gets 5 by 3 components.
+    expect(readComponents(placeholder.hash)).toEqual([5, 3]);
     // A flat image averages to its own color.
     expect(placeholder.color).toBe("#336699");
     expect(placeholder.url).toBeUndefined();
   });
 
-  it("uses the configured number of components", async () => {
-    const code: string = await callLoad(
-      createPlugin({ type: "blurhash", componentX: 2, componentY: 2 }),
-      path.join(dir, "photo.png?image-source"),
-    );
+  it("picks the components per image from its aspect ratio", async () => {
+    await sharp({ create: { width: 180, height: 320, channels: 3, background: "#336699" } })
+      .png()
+      .toFile(path.join(dir, "portrait.png"));
+    await sharp({ create: { width: 400, height: 40, channels: 3, background: "#336699" } })
+      .png()
+      .toFile(path.join(dir, "banner.png"));
 
-    expect(readPlaceholder(code).hash).toHaveLength(4 + 2 * 2 * 2);
-  });
+    const plugin = createPlugin({ type: "blurhash" });
+    const portrait: string = await callLoad(plugin, path.join(dir, "portrait.png?image-source"));
+    const banner: string = await callLoad(plugin, path.join(dir, "banner.png?image-source"));
 
-  it("rejects components outside 1 to 9 when the plugin is created", () => {
-    expect(() => createPlugin({ type: "blurhash", componentX: 10 })).toThrow(
-      "BlurHash componentX must be a whole number from 1 to 9, got 10.",
-    );
-    expect(() => createPlugin({ type: "blurhash", componentY: 0 })).toThrow(
-      "BlurHash componentY must be a whole number from 1 to 9, got 0.",
-    );
+    expect(readComponents(readPlaceholder(portrait).hash)).toEqual([3, 5]);
+    expect(readComponents(readPlaceholder(banner).hash)).toEqual([9, 1]);
   });
 
   it("does not import blurhash for the default preview", async () => {

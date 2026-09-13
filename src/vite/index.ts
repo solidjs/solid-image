@@ -25,20 +25,15 @@ const DEFAULT_QUALITY = 80;
 // Width of the inline preview, in pixels. Small enough to stay under a
 // kilobyte once encoded, large enough to show the shape of the image.
 const DEFAULT_PLACEHOLDER_SIZE = 20;
-// A common BlurHash default. It keeps the broad shape of the image in a hash of
-// about 30 characters.
-const DEFAULT_BLURHASH_COMPONENT_X = 4;
-const DEFAULT_BLURHASH_COMPONENT_Y = 3;
 
 type MaybePromise<T> = T | Promise<T>;
 
-/** Turns on a BlurHash preview instead of the inline image preview. */
+/**
+ * Turns on a BlurHash preview instead of the inline image preview.
+ * The number of components is picked per image from its aspect ratio.
+ */
 export interface BlurhashPlaceholderOptions {
   type: "blurhash";
-  /** Horizontal components, from 1 to 9. More keep more detail. Defaults to 4. */
-  componentX?: number;
-  /** Vertical components, from 1 to 9. More keep more detail. Defaults to 3. */
-  componentY?: number;
 }
 
 export interface SolidImageOptions {
@@ -96,13 +91,7 @@ function isValidFileExtension(extensions: Set<string>, target: string): target i
 type ResolvedPlaceholder =
   | { type: "none" }
   | { type: "image"; size: number }
-  | { type: "blurhash"; componentX: number; componentY: number };
-
-function assertComponents(name: string, value: number): void {
-  if (!Number.isInteger(value) || value < 1 || value > 9) {
-    throw new Error(`BlurHash ${name} must be a whole number from 1 to 9, got ${value}.`);
-  }
-}
+  | { type: "blurhash" };
 
 function resolvePlaceholder(
   option: NonNullable<SolidImageOptions["local"]>["placeholder"],
@@ -114,11 +103,7 @@ function resolvePlaceholder(
     return { type: "image", size: DEFAULT_PLACEHOLDER_SIZE };
   }
   if (option.type === "blurhash") {
-    const componentX = option.componentX ?? DEFAULT_BLURHASH_COMPONENT_X;
-    const componentY = option.componentY ?? DEFAULT_BLURHASH_COMPONENT_Y;
-    assertComponents("componentX", componentX);
-    assertComponents("componentY", componentY);
-    return { type: "blurhash", componentX, componentY };
+    return { type: "blurhash" };
   }
   return { type: "image", size: option.size ?? DEFAULT_PLACEHOLDER_SIZE };
 }
@@ -150,12 +135,7 @@ async function getPlaceholder(
       return await getPlaceholderData(imagePath, placeholder.size);
     case "blurhash": {
       const { encode } = await loadBlurhash();
-      return await getBlurhashData(
-        imagePath,
-        encode,
-        placeholder.componentX,
-        placeholder.componentY,
-      );
+      return await getBlurhashData(imagePath, encode);
     }
   }
 }
