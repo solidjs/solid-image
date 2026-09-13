@@ -1,5 +1,5 @@
 import { createRoot } from "solid-js";
-import { renderToString } from "solid-js/web";
+import { renderToString } from "@solidjs/web";
 import { describe, expect, it, vi } from "vitest";
 import { ClientOnly, createClientSignal } from "../core/client-only";
 import { createLazyRender } from "../core/create-lazy-render";

@@ -18,7 +18,7 @@ npm i @solidjs/image
 
 Requirements:
 
-- `solid-js` 1.9.9 or newer, and Vite 8 or newer. Both are peer dependencies.
+- `solid-js` and `@solidjs/web` 2.0 or newer, and Vite 8 or newer. All three are peer dependencies. For Solid 1.x, use the 0.x versions of this package.
 - Node 24 or newer for the Vite plugin. It uses [`sharp`](https://sharp.pixelplumbing.com) to process images.
 - [`blurhash`](https://github.com/woltapp/blurhash) 2 or newer, only for the BlurHash preview. It is an optional peer dependency.
 
@@ -29,7 +29,7 @@ Requirements:
 ```ts
 // vite.config.ts
 import { defineConfig } from "vite";
-import solid from "vite-plugin-solid";
+import solid from "@solidjs/vite-plugin";
 import { imagePlugin } from "@solidjs/image/vite";
 
 export default defineConfig({
@@ -76,12 +76,12 @@ Import the image with the `?image` query. You get the `src` and `transformer` pr
 
 ```tsx
 import { SolidImage } from "@solidjs/image";
-import { onMount, Show } from "solid-js";
+import { onSettled, Show } from "solid-js";
 
 import example from "../images/example.jpg?image";
 
 function Placeholder(props: { show: () => void }) {
-  onMount(() => props.show());
+  onSettled(() => props.show());
 
   return <div>Loading...</div>;
 }
@@ -193,7 +193,7 @@ Lazy loading costs time for the first image on the page, because nothing starts 
 
 The server then renders the real image instead of a blank placeholder, so the browser finds it while it parses the page. Leave every other image lazy.
 
-An eager image is also preloaded with a `<link rel="preload">` in the head, so the browser starts fetching it before it reaches the image. The link names the preferred format, and a browser that cannot read that format skips it. Solid adds the link when the server renders a page with a `<head>`.
+An eager image is also preloaded with a `<link rel="preload">` in the head, so the browser starts fetching it before it reaches the image. The link names the preferred format, and a browser that cannot read that format skips it. It goes through Solid's `useHead`, so it reaches the head in the HTML from the server and in the browser.
 
 ### Types
 
