@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import type { Abortable } from "node:events";
 import type { Mode, ObjectEncodingOptions, OpenMode } from "node:fs";
 import fs from "node:fs/promises";
@@ -19,13 +20,15 @@ export async function fileExists(p: string): Promise<boolean> {
 }
 
 /**
- * Returns a string that changes whenever the file changes.
- * It is part of the name of a processed image, so an edited source
- * is written to a new file instead of reusing a stale one.
+ * Returns a hash of the file content.
+ * It is part of the name of a processed image, so an edited source is written
+ * to a new file instead of reusing a stale one.
+ * It reads the content rather than the modification time, because a fresh
+ * checkout gives every file a new time and would never match the cache.
  */
 export async function getFileSignature(filePath: string): Promise<string> {
-  const stat = await fs.stat(filePath);
-  return `${stat.size}-${stat.mtimeMs}`;
+  const content = await fs.readFile(filePath);
+  return crypto.createHash("sha1").update(content).digest("hex");
 }
 
 const PATH_FILTER = /[<>:"|?*]/;

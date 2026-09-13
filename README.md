@@ -255,15 +255,19 @@ Handles imports ending in `?image`.
 | `quality` | `number` | `80` | Quality passed to sharp, from 1 to 100. |
 | `input` | `SolidImageFormat[]` | `["png", "jpeg", "webp"]` | Source formats to process. Other files are left alone. |
 | `output` | `SolidImageFormat[]` | `["png", "jpeg", "webp"]` | Formats to emit. |
-| `publicPath` | `string` | `"dist"` | Directory the processed files are written to. |
+| `publicPath` | `string` | Vite's `publicDir` | Directory the dev server writes processed files to. |
 | `placeholder` | `boolean \| { size?: number } \| { type: "blurhash" }` | `true` | Preview shown while the image loads. See [BlurHash preview](#blurhash-preview). |
 
 - One file is emitted per output format and per size. `output: ["webp", "jpeg"]` with `sizes: [480, 800]` gives four files per image.
+- Sizes wider than the source are dropped and replaced by the source width. An image is never enlarged.
+- Photos are turned upright using their EXIF orientation.
+- Animated images keep every frame in WebP. Other formats keep the first frame.
+- JPEG uses mozjpeg and WebP uses its highest effort. PNG is lossless, so `quality` does not apply to it.
 - On build the files go through the bundler as assets, so `base`, `assetsDir` and the build manifest apply to them. Nothing is written to `publicPath`.
 - On the dev server the files are written to `<publicPath>/.image/i-<hash>-<width>.<ext>` and served from `/.image/...`.
-- `publicPath` should be served at the root of your site. Add `.image` to `.gitignore` when it sits inside a checked in directory such as `public`.
+- `publicPath` defaults to Vite's public directory, which the dev server serves at the root of the site. Add `.image` to `.gitignore`.
 - The `<img>` falls back to the largest size of the last output format. The original file is never imported, so it does not reach the bundle.
-- The hash covers the source path, the size and modification time of the source file, the format, the width and the quality.
+- The hash covers the content of the source file, the format, the width and the quality. It leaves out the path and the modification time, so a fresh checkout in CI still hits the cache.
 - An image is encoded once and reused. The dev server reuses the file in `publicPath`. A build reuses its copy in the Vite cache directory.
 - Editing an image or changing an option produces a new name, so a stale file is never served.
 

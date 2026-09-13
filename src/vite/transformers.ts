@@ -11,28 +11,30 @@ export function transformImage(
   size: number,
   quality: number,
 ) {
-  const input = sharp(originalPath);
+  // Only WebP can store every frame of an animated source. Other formats would
+  // get all frames stacked into one tall image, so they keep the first frame.
+  const input = sharp(originalPath, { animated: targetFormat === "webp" })
+    // Apply the EXIF orientation, so photos from a phone are not sideways.
+    .autoOrient()
+    // Never enlarge. An upscaled file is larger and has no more detail.
+    .resize({ width: size, withoutEnlargement: true });
+
   switch (targetFormat) {
     case "avif":
-      return input.resize(size).avif({
-        quality,
-      });
+      return input.avif({ quality });
     case "jpeg":
-      return input.resize(size).jpeg({
-        quality,
-      });
+      // mozjpeg makes files about a tenth smaller at the same quality.
+      return input.jpeg({ quality, mozjpeg: true });
     case "png":
-      return input.resize(size).png({
-        quality,
-      });
+      // PNG is lossless here, so quality does not apply. Spend more time on
+      // compression instead, since the result is cached.
+      return input.png({ compressionLevel: 9, adaptiveFiltering: true });
     case "webp":
-      return input.resize(size).webp({
-        quality,
-      });
+      // The highest effort gives the smallest file. The result is cached, so
+      // the extra encoding time is only paid once.
+      return input.webp({ quality, effort: 6 });
     case "tiff":
-      return input.resize(size).tiff({
-        quality,
-      });
+      return input.tiff({ quality });
   }
 }
 
@@ -54,7 +56,7 @@ export async function getPlaceholderData(
   originalPath: string,
   size: number,
 ): Promise<PlaceholderData> {
-  const input = sharp(originalPath);
+  const input = sharp(originalPath).autoOrient();
   const [buffer, stats] = await Promise.all([
     input.clone().resize(size).webp({ quality: 40 }).toBuffer(),
     input.clone().stats(),
@@ -97,6 +99,8 @@ export async function getBlurhashData(
   componentY: number,
 ): Promise<BlurhashData> {
   const { data, info } = await sharp(originalPath)
+    // Hash the photo as it displays, like the variants and the inline preview.
+    .autoOrient()
     .resize(BLURHASH_SAMPLE_SIZE, BLURHASH_SAMPLE_SIZE, { fit: "inside", withoutEnlargement: true })
     .ensureAlpha()
     .raw()
@@ -125,11 +129,16 @@ interface ImageData {
   height: number;
 }
 
-/** Reads the intrinsic size of an image. Missing values become 0. */
+/**
+ * Reads the intrinsic size of an image, as it is displayed.
+ * A photo with a rotated EXIF orientation reports its width and height swapped.
+ * Missing values become 0.
+ */
 export async function getImageData(originalPath: string): Promise<ImageData> {
   const result = await sharp(originalPath).metadata();
+  const size = result.autoOrient ?? result;
   return {
-    width: result.width || 0,
-    height: result.height || 0,
+    width: size.width || 0,
+    height: size.height || 0,
   };
 }

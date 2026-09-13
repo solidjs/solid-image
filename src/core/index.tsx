@@ -183,6 +183,8 @@ export function SolidImage<T>(props: SolidImageProps<T>): JSX.Element {
                 src={serverSrc()}
                 srcset={props.eager ? fallbackSrcSet() : undefined}
                 sizes={props.eager ? props.sizes : undefined}
+                width={width()}
+                height={height()}
                 alt={props.alt}
                 crossOrigin={props.crossOrigin}
                 fetchpriority={props.fetchPriority}
@@ -196,6 +198,8 @@ export function SolidImage<T>(props: SolidImageProps<T>): JSX.Element {
                 src={props.src.source}
                 srcset={fallbackSrcSet()}
                 sizes={props.sizes}
+                width={width()}
+                height={height()}
                 alt={props.alt}
                 onLoad={() => {
                   if (!defer()) {
@@ -218,11 +222,16 @@ export function SolidImage<T>(props: SolidImageProps<T>): JSX.Element {
         <ClientOnly
           fallback={
             <noscript>
+              {/* Without JavaScript there is no observer, so let the browser
+                  defer offscreen images itself. */}
               <img
                 data-solid-image="image"
                 src={props.src.source}
                 srcset={fallbackSrcSet()}
                 sizes={props.sizes}
+                width={width()}
+                height={height()}
+                loading="lazy"
                 alt={props.alt}
                 crossOrigin={props.crossOrigin}
                 decoding={props.decoding}
