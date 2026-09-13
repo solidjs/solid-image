@@ -301,6 +301,45 @@ export default {
 `;
 }
 
+/**
+ * Builds the module for an `image-url` import, which exports the URL of one file.
+ *
+ * - `format` picks the format. It defaults to the format the `img` falls back to.
+ * - `width` picks the width. It defaults to the largest size, and is never wider
+ *   than the source.
+ */
+function getImageURL(
+  relativePath: string,
+  info: ImageInfo,
+  query: URLSearchParams,
+  outputFormat: SolidImageFormat[],
+  sizes: number[],
+): string {
+  const formatParam = query.get("format");
+  let format: SolidImageFormat;
+  if (formatParam == null) {
+    const formats = getEffectiveFormats(outputFormat, info.transparent);
+    format = formats[formats.length - 1]!;
+  } else if ((FORMAT_ORDER as string[]).includes(formatParam)) {
+    format = formatParam as SolidImageFormat;
+  } else {
+    throw new Error(
+      `Unknown image format "${formatParam}" in ${relativePath}. Use one of ${FORMAT_ORDER.join(", ")}.`,
+    );
+  }
+
+  const widthParam = query.get("width");
+  const width = widthParam == null ? Math.max(...sizes) : Number(widthParam);
+  if (!Number.isInteger(width) || width <= 0) {
+    throw new Error(
+      `Invalid image width "${widthParam}" in ${relativePath}. Use a whole number of pixels.`,
+    );
+  }
+
+  const [size] = getEffectiveSizes([width], info.width);
+  return `export { default } from ${JSON.stringify(`${relativePath}?image-raw-${format}-${size}`)};`;
+}
+
 function getImageTransformer(imagePath: string, outputTypes: string[], sizes: number[]): string {
   let imported = "";
   let exported = "";
@@ -340,7 +379,9 @@ export default { src, transformer };
 `;
 }
 
-const LOCAL_PATH = /\?image(-[a-z]+(-[0-9]+)?)?/;
+// Query flag of an import that asks for the URL of one file.
+const URL_QUERY = "image-url";
+const LOCAL_PATH = /\?image(-[a-z]+(-[0-9]+)?)?|&image-url(&|$)/;
 const REMOTE_PATH = "image:";
 
 /**
@@ -491,6 +532,11 @@ export default {
         }
         const originalPath = `${dir}/${name}.${actualExtension}`;
         const relativePath = `./${name}.${actualExtension}`;
+        // The URL of one file, for places that take a single file.
+        const query = new URLSearchParams(condition);
+        if (query.has(URL_QUERY)) {
+          return getImageURL(relativePath, await readInfo(originalPath), query, outputFormat, sizes);
+        }
         // Get the true source
         if (condition.startsWith("image-source")) {
           const [info, preview] = await Promise.all([

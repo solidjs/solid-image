@@ -23,6 +23,10 @@ import "./styles.css";
 // few pixels, so a small canvas decodes fast and looks the same.
 const BLURHASH_WIDTH = 32;
 
+// How far outside the viewport a lazy image starts loading. Starting a little
+// early means the image is often ready by the time it scrolls into view.
+const DEFAULT_ROOT_MARGIN = "500px";
+
 export interface SolidImageProps<T> {
   /** The image, its intrinsic size and any options the transformer needs. */
   src: SolidImageSource<T>;
@@ -33,17 +37,25 @@ export interface SolidImageProps<T> {
 
   /** Called once the image has loaded and the placeholder is hidden. */
   onLoad?: () => void;
+  /** Called when the image fails to load. */
+  onError?: () => void;
   /**
    * Placeholder shown while the image loads. It only renders on the client,
    * and only after the container enters the viewport.
    *
    * `visible` is true while the placeholder should be shown.
-   * Call `onLoad` once the placeholder has mounted. The image is only
-   * revealed after that call, so a fast image never skips the placeholder.
+   * Call `onLoad` once the placeholder has mounted. It can come before or after
+   * the image loads. The image is only revealed once both have happened, so a
+   * fast image never skips the placeholder.
    *
    * Leave it out to reveal the image as soon as it loads.
    */
   fallback?: (visible: () => boolean, onLoad: () => void) => JSX.Element;
+  /**
+   * Shown when the image fails to load. It only renders on the client.
+   * The preview stays behind it.
+   */
+  errorFallback?: () => JSX.Element;
 
   /**
    * Loads the image right away instead of waiting for it to scroll into view.
@@ -52,6 +64,14 @@ export interface SolidImageProps<T> {
    * the page. Use it for the image above the fold and leave the rest lazy.
    */
   eager?: boolean;
+
+  /**
+   * How far outside the viewport a lazy image starts loading, as a CSS margin
+   * such as `500px` or `50%`. Defaults to `500px`.
+   *
+   * It is read once, when the component is created.
+   */
+  rootMargin?: string;
 
   /**
    * Value of the `sizes` attribute, such as `50vw` or
@@ -85,18 +105,49 @@ function SolidImageSources(props: SolidImageSourcesProps): JSX.Element {
 
 /**
  * Renders a responsive image inside a box that keeps its aspect ratio.
- * The image loads once the box enters the viewport, and the placeholder
+ * The image loads once the box nears the viewport, and the placeholder
  * is shown until then.
  */
 export function SolidImage<T>(props: SolidImageProps<T>): JSX.Element {
-  const [showPlaceholder, setShowPlaceholder] = createSignal(true);
-  const laze = createLazyRender<HTMLDivElement>();
-  // Without a fallback there is nothing to wait for, so the image
-  // is revealed as soon as it loads.
-  const [defer, setDefer] = createSignal(props.fallback != null);
+  const laze = createLazyRender<HTMLDivElement>({
+    rootMargin: props.rootMargin ?? DEFAULT_ROOT_MARGIN,
+  });
+
+  // The image is revealed once it has loaded and once the placeholder is ready.
+  // Either can happen first. Without a fallback there is nothing to wait for.
+  const [loaded, setLoaded] = createSignal(false);
+  const [placeholderReady, setPlaceholderReady] = createSignal(props.fallback == null);
+  const [failed, setFailed] = createSignal(false);
+  const revealed = createMemo(() => loaded() && placeholderReady());
+  const showPlaceholder = createMemo(() => !revealed() && !failed());
 
   function onPlaceholderLoad() {
-    setDefer(false);
+    if (placeholderReady()) {
+      return;
+    }
+    setPlaceholderReady(true);
+    if (loaded()) {
+      props.onLoad?.();
+    }
+  }
+
+  function onImageLoad(image: HTMLImageElement) {
+    // Decoding first keeps a large image from stalling the fade. A failed
+    // decode still reveals the image, since it has loaded.
+    image
+      .decode()
+      .catch(() => {})
+      .then(() => {
+        setLoaded(true);
+        if (placeholderReady()) {
+          props.onLoad?.();
+        }
+      });
+  }
+
+  function onImageError() {
+    setFailed(true);
+    props.onError?.();
   }
 
   const width = createMemo(() => props.src.width);
@@ -188,8 +239,8 @@ export function SolidImage<T>(props: SolidImageProps<T>): JSX.Element {
 
     const placeholder = props.src.placeholder;
     // Drop the preview once the image is on screen, so a transparent
-    // image does not show it through.
-    if (!placeholder || !showPlaceholder()) {
+    // image does not show it through. An image that failed keeps it.
+    if (!placeholder || revealed()) {
       return style;
     }
 
@@ -230,14 +281,10 @@ export function SolidImage<T>(props: SolidImageProps<T>): JSX.Element {
                 width={width()}
                 height={height()}
                 alt={props.alt}
-                onLoad={() => {
-                  if (!defer()) {
-                    setShowPlaceholder(false);
-                    props.onLoad?.();
-                  }
-                }}
+                onLoad={event => onImageLoad(event.currentTarget)}
+                onError={onImageError}
                 style={{
-                  opacity: showPlaceholder() ? 0 : 1,
+                  opacity: revealed() ? 1 : 0,
                 }}
                 crossOrigin={props.crossOrigin}
                 fetchpriority={fetchPriority()}
@@ -274,6 +321,7 @@ export function SolidImage<T>(props: SolidImageProps<T>): JSX.Element {
           <Show when={visible() && props.fallback}>
             {cb => cb()(showPlaceholder, onPlaceholderLoad)}
           </Show>
+          <Show when={failed() && props.errorFallback}>{cb => cb()()}</Show>
         </ClientOnly>
       </div>
     </div>

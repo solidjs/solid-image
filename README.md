@@ -163,7 +163,10 @@ The component works on its own. Pass `src` and an optional `transformer`:
 | `transformer` | `SolidImageTransformer<T>` | no | Produces the responsive variants for `src`. |
 | `eager` | `boolean` | no | Loads the image right away, preloads it from the head and gives it a high fetch priority. |
 | `sizes` | `string` | no | Value of the `sizes` attribute, such as `50vw`. |
+| `rootMargin` | `string` | no | How far outside the viewport a lazy image starts loading, as a CSS margin. Defaults to `500px`. |
 | `onLoad` | `() => void` | no | Called once the image has loaded and the placeholder is hidden. |
+| `onError` | `() => void` | no | Called when the image fails to load. |
+| `errorFallback` | `() => JSX.Element` | no | Shown when the image fails to load. |
 | `crossOrigin` | `JSX.HTMLCrossorigin` | no | Forwarded to the `<img>`. |
 | `fetchPriority` | `"high" \| "low" \| "auto"` | no | Forwarded to the `<img>`. Defaults to `high` for an eager image. |
 | `decoding` | `"sync" \| "async" \| "auto"` | no | Forwarded to the `<img>`. Defaults to `async` for a lazy image. |
@@ -171,9 +174,31 @@ The component works on its own. Pass `src` and an optional `transformer`:
 The `fallback` callback takes two arguments.
 
 - `visible` is a signal. It is `true` while the placeholder should be shown, and `false` once the image has loaded.
-- `onLoad` tells the component your placeholder is on screen. Call it once the placeholder has mounted. The image is only revealed after that call, so an image that loads instantly never skips the placeholder.
+- `onLoad` tells the component your placeholder is on screen. Call it once the placeholder has mounted. It can come before or after the image loads. The image is only revealed once both have happened, so an image that loads instantly never skips the placeholder.
 
 The `fallback` renders on the client only, and only after the container scrolls into view. Leave it out and the image is revealed as soon as it loads.
+
+### When the image fails
+
+Pass `onError` to hear about it, and `errorFallback` to show something in its place.
+
+```tsx
+<SolidImage {...example} alt="example" errorFallback={() => <p>Could not load the image.</p>} fallback={...} />
+```
+
+- The loading placeholder is removed, and the broken image stays hidden.
+- The preview stays behind the error fallback.
+- `errorFallback` renders on the client only.
+
+### Loading ahead of the scroll
+
+A lazy image starts loading once it is within 500px of the viewport, so it is often ready by the time it scrolls in. Change the distance with `rootMargin`, which takes a CSS margin such as `1000px` or `50%`.
+
+```tsx
+<SolidImage {...example} alt="example" rootMargin="1000px" fallback={...} />
+```
+
+The margin is read once, when the component is created.
 
 ### Picking the right variant
 
@@ -249,7 +274,7 @@ Both option groups are optional. Passing neither returns no plugin.
 
 #### `options.local`
 
-Handles imports ending in `?image`.
+Handles imports ending in `?image`, and single file imports ending in `image-url`.
 
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -303,6 +328,20 @@ imagePlugin({
 - The server paints the average color of the image. The browser decodes the hash into a 32px wide canvas and paints it over that color.
 - Only apps that turn it on import `blurhash`. The component itself never does.
 
+#### Single file URL
+
+Some places take one file instead of a responsive image, such as an `og:image` tag, a CSS background or a canvas. Import the image with `?image-url` to get the URL of one file.
+
+```ts
+import url from "./photo.jpg?image-url";
+import thumbnail from "./photo.jpg?width=400&format=webp&image-url";
+```
+
+- `width` defaults to the largest of `sizes`. The file is never wider than the source.
+- `format` defaults to the format the `<img>` falls back to.
+- The file goes through the same pipeline and cache as the other variants.
+- Put `image-url` last, so the shipped types match the import.
+
 #### `options.remote`
 
 Handles imports starting with `image:`.
@@ -317,12 +356,14 @@ Handles imports starting with `image:`.
 
 1. `SolidImage` renders a padding based aspect ratio box, so the layout is stable before the image arrives.
 2. The box is painted with the preview and its color, when the source carries a placeholder. An image preview is a few pixels wide, so the browser scales it up into a blur. A BlurHash is decoded in the browser, and the server paints its average color until then.
-3. An `IntersectionObserver` watches the container. Nothing loads until it enters the viewport.
-4. Once visible, the `<img>` and your placeholder render. The image starts transparent.
+3. An `IntersectionObserver` watches the container. Nothing loads until it comes within `rootMargin` of the viewport.
+4. Once near, the `<img>` and your placeholder render. The image starts transparent.
 5. Your placeholder calls `onLoad` to say it is on screen.
-6. When the image finishes loading after that call, the placeholder is hidden, the image fades in over the preview, and the `onLoad` prop fires.
-7. On the server a lazy `<img>` carries a blank SVG of the same size, so nothing is fetched before the image is in view. An eager `<img>` renders in full. The placeholder and the loading logic are client only.
-8. The server also renders a `<noscript>` copy of the image, so a reader with no JavaScript sees it. Browsers never load the content of a `<noscript>` element, so it costs nothing otherwise.
+6. The image loads, and is decoded before it is shown, so a large image does not stall the fade.
+7. Once both steps are done, in either order, the placeholder is hidden, the image fades in over the preview, and the `onLoad` prop fires. The fade is skipped for readers who ask for reduced motion.
+8. If the image fails, the placeholder is removed, `onError` fires, and `errorFallback` renders over the preview.
+9. On the server a lazy `<img>` carries a blank SVG of the same size, so nothing is fetched before the image is in view. An eager `<img>` renders in full. The placeholder and the loading logic are client only.
+10. The server also renders a `<noscript>` copy of the image, so a reader with no JavaScript sees it. Browsers never load the content of a `<noscript>` element, so it costs nothing otherwise.
 
 Every rendered element carries a `data-solid-image` attribute you can style. The values are `container`, `aspect-ratio`, `picture`, `image` and `blocker`. The shipped stylesheet uses the same attribute.
 
