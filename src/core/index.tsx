@@ -7,7 +7,7 @@ import {
   mergeImageVariantsByType,
   mergeImageVariantsToSrcSet,
 } from "./transformer.ts";
-import type { SolidImageSource, SolidImageTransformer, SolidImageVariant } from "./types.ts";
+import type { SolidImageSource, SolidImageTransformer } from "./types.ts";
 import { getAspectRatioBoxStyle, getEmptyImageURL, getPlaceholderStyle } from "./utils.ts";
 
 import "./styles.css";
@@ -35,6 +35,14 @@ export interface SolidImageProps<T> {
   fallback?: (visible: () => boolean, onLoad: () => void) => JSX.Element;
 
   /**
+   * Loads the image right away instead of waiting for it to scroll into view.
+   *
+   * The server renders the real image, so the browser finds it while it parses
+   * the page. Use it for the image above the fold and leave the rest lazy.
+   */
+  eager?: boolean;
+
+  /**
    * Value of the `sizes` attribute, such as `50vw` or
    * `(max-width: 600px) 100vw, 50vw`.
    *
@@ -48,25 +56,17 @@ export interface SolidImageProps<T> {
   decoding?: "sync" | "async" | "auto" | undefined;
 }
 
-interface SolidImageSourcesProps<T> extends SolidImageProps<T> {
-  variants: SolidImageVariant[];
+/** A MIME type and the `srcset` built from every variant of that type. */
+type VariantGroup = [type: string, srcset: string];
+
+interface SolidImageSourcesProps {
+  groups: VariantGroup[];
+  sizes: string | undefined;
 }
 
-function SolidImageSources<T>(props: SolidImageSourcesProps<T>): JSX.Element {
-  const mergedVariants = createMemo(() => {
-    const types = mergeImageVariantsByType(props.variants);
-
-    const values: [type: string, srcset: string][] = [];
-
-    for (const [key, variants] of types) {
-      values.push([key, mergeImageVariantsToSrcSet(variants)]);
-    }
-
-    return values;
-  });
-
+function SolidImageSources(props: SolidImageSourcesProps): JSX.Element {
   return (
-    <For each={mergedVariants()}>
+    <For each={props.groups}>
       {([type, srcset]) => <source type={type} srcset={srcset} sizes={props.sizes} />}
     </For>
   );
@@ -91,6 +91,41 @@ export function SolidImage<T>(props: SolidImageProps<T>): JSX.Element {
   const width = createMemo(() => props.src.width);
   const height = createMemo(() => props.src.height);
 
+  const groups = createMemo<VariantGroup[]>(() => {
+    const transformer = props.transformer;
+    if (!transformer) {
+      return [];
+    }
+
+    const types = mergeImageVariantsByType(createImageVariants(props.src, transformer));
+
+    const values: VariantGroup[] = [];
+    for (const [type, variants] of types) {
+      values.push([type, mergeImageVariantsToSrcSet(variants)]);
+    }
+
+    return values;
+  });
+
+  // The browser takes the first `source` it supports and only reaches the `img`
+  // when it supports none of them. Give the `img` the last group, which is the
+  // least preferred format and so the most widely supported one.
+  const fallbackSrcSet = createMemo(() => {
+    const values = groups();
+    return values.length > 0 ? values[values.length - 1]![1] : undefined;
+  });
+
+  const visible = createMemo(() => props.eager || laze.visible);
+
+  const serverSrc = createMemo(() =>
+    props.eager
+      ? props.src.source
+      : getEmptyImageURL({
+          width: width(),
+          height: height(),
+        }),
+  );
+
   const boxStyle = createMemo(() => {
     const style = getAspectRatioBoxStyle({
       width: width(),
@@ -111,19 +146,17 @@ export function SolidImage<T>(props: SolidImageProps<T>): JSX.Element {
     <div ref={laze.ref} data-solid-image="container">
       <div data-solid-image="aspect-ratio" style={boxStyle()}>
         <picture data-solid-image="picture">
-          <Show when={props.transformer}>
-            {cb => <SolidImageSources variants={createImageVariants(props.src, cb())} {...props} />}
-          </Show>
+          <SolidImageSources groups={groups()} sizes={props.sizes} />
           <ClientOnly
             fallback={
-              // The image must not load before it scrolls into view, so the
-              // server renders a blank placeholder of the same size instead.
+              // An eager image is rendered in full, so the browser finds it
+              // while it parses the page. A lazy image gets a blank placeholder
+              // of the same size and loads nothing.
               <img
                 data-solid-image="image"
-                src={getEmptyImageURL({
-                  width: width(),
-                  height: height(),
-                })}
+                src={serverSrc()}
+                srcset={props.eager ? fallbackSrcSet() : undefined}
+                sizes={props.eager ? props.sizes : undefined}
                 alt={props.alt}
                 crossOrigin={props.crossOrigin}
                 fetchpriority={props.fetchPriority}
@@ -131,10 +164,12 @@ export function SolidImage<T>(props: SolidImageProps<T>): JSX.Element {
               />
             }
           >
-            <Show when={laze.visible}>
+            <Show when={visible()}>
               <img
                 data-solid-image="image"
                 src={props.src.source}
+                srcset={fallbackSrcSet()}
+                sizes={props.sizes}
                 alt={props.alt}
                 onLoad={() => {
                   if (!defer()) {
@@ -152,10 +187,27 @@ export function SolidImage<T>(props: SolidImageProps<T>): JSX.Element {
             </Show>
           </ClientOnly>
         </picture>
+        {/* Readers with no JavaScript never run the loading logic, so the
+            server gives them a plain image they can see. */}
+        <ClientOnly
+          fallback={
+            <noscript>
+              <img
+                data-solid-image="image"
+                src={props.src.source}
+                srcset={fallbackSrcSet()}
+                sizes={props.sizes}
+                alt={props.alt}
+                crossOrigin={props.crossOrigin}
+                decoding={props.decoding}
+              />
+            </noscript>
+          }
+        />
       </div>
       <div data-solid-image="blocker">
         <ClientOnly>
-          <Show when={laze.visible && props.fallback}>
+          <Show when={visible() && props.fallback}>
             {cb => cb()(showPlaceholder, onPlaceholderLoad)}
           </Show>
         </ClientOnly>
