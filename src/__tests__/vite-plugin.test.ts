@@ -210,6 +210,47 @@ describe("local images", () => {
     expect(code).toContain('import source from "./photo.png"');
   });
 
+  it("inlines a placeholder preview and the dominant color", async () => {
+    const plugin = createLocalPlugin();
+    const code: string = await callLoad(plugin, path.join(dir, "photo.png?image-source"));
+
+    const placeholder = JSON.parse(/placeholder: (\{.+\}),/.exec(code)![1]!);
+
+    expect(placeholder.url.startsWith("data:image/webp;base64,")).toBe(true);
+
+    // sharp picks the dominant color from a quantized histogram, so it lands
+    // near the fill color rather than exactly on it.
+    expect(placeholder.color).toMatch(/^#[0-9a-f]{6}$/);
+    const channels = [1, 3, 5].map(at => parseInt(placeholder.color.slice(at, at + 2), 16));
+    for (const [index, expected] of [0x33, 0x66, 0x99].entries()) {
+      expect(Math.abs(channels[index]! - expected)).toBeLessThan(16);
+    }
+
+    const preview = Buffer.from(placeholder.url.split(",")[1]!, "base64");
+    const meta = await sharp(preview).metadata();
+
+    expect(meta.format).toBe("webp");
+    expect(meta.width).toBe(20);
+    expect(preview.byteLength).toBeLessThan(1024);
+  });
+
+  it("uses the configured placeholder size", async () => {
+    const plugin = createLocalPlugin({ placeholder: { size: 8 } });
+    const code: string = await callLoad(plugin, path.join(dir, "photo.png?image-source"));
+
+    const placeholder = JSON.parse(/placeholder: (\{.+\}),/.exec(code)![1]!);
+    const meta = await sharp(Buffer.from(placeholder.url.split(",")[1]!, "base64")).metadata();
+
+    expect(meta.width).toBe(8);
+  });
+
+  it("skips the placeholder when it is turned off", async () => {
+    const plugin = createLocalPlugin({ placeholder: false });
+    const code: string = await callLoad(plugin, path.join(dir, "photo.png?image-source"));
+
+    expect(code).toContain("placeholder: undefined");
+  });
+
   it("loads a transformer that imports one variant per format and size", async () => {
     const plugin = createLocalPlugin();
     const code: string = await callLoad(plugin, path.join(dir, "photo.png?image-transformer"));
@@ -262,6 +303,56 @@ describe("local images", () => {
     const second: string = await callLoad(plugin, path.join(dir, "photo.png?image-raw-webp-400"));
 
     expect(first).toBe(second);
+  });
+
+  it("reuses the file it already emitted instead of encoding again", async () => {
+    const plugin = createLocalPlugin();
+    const code: string = await callLoad(plugin, path.join(dir, "photo.png?image-raw-webp-800"));
+    const emitted = path.join(publicPath, /export default "(.+)"/.exec(code)![1]!);
+
+    const before = await fs.stat(emitted);
+    await fs.writeFile(emitted, "not an image");
+    await callLoad(plugin, path.join(dir, "photo.png?image-raw-webp-800"));
+    const after = await fs.readFile(emitted, "utf8");
+
+    // The plugin left the file alone, so nothing was encoded a second time.
+    expect(after).toBe("not an image");
+
+    await fs.rm(emitted);
+    await callLoad(plugin, path.join(dir, "photo.png?image-raw-webp-800"));
+
+    expect((await fs.stat(emitted)).size).toBe(before.size);
+  });
+
+  it("gives a different file name when the quality changes", async () => {
+    const first: string = await callLoad(
+      createLocalPlugin({ quality: 80 }),
+      path.join(dir, "photo.png?image-raw-webp-400"),
+    );
+    const second: string = await callLoad(
+      createLocalPlugin({ quality: 20 }),
+      path.join(dir, "photo.png?image-raw-webp-400"),
+    );
+
+    expect(first).not.toBe(second);
+  });
+
+  it("gives a different file name when the source image changes", async () => {
+    const editedPath = path.join(dir, "edited.png");
+    await sharp({ create: { width: 64, height: 32, channels: 3, background: "#336699" } })
+      .png()
+      .toFile(editedPath);
+
+    const plugin = createLocalPlugin();
+    const first: string = await callLoad(plugin, path.join(dir, "edited.png?image-raw-webp-400"));
+
+    await sharp({ create: { width: 64, height: 32, channels: 3, background: "#993366" } })
+      .png()
+      .toFile(editedPath);
+
+    const second: string = await callLoad(plugin, path.join(dir, "edited.png?image-raw-webp-400"));
+
+    expect(first).not.toBe(second);
   });
 
   it("ignores a file extension that is not in the input list", async () => {

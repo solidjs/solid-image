@@ -17,6 +17,11 @@
   user-select: none;
 }
 
+/* Fades the image in over the inline preview once it has loaded. */
+[data-solid-image="image"] {
+  transition: opacity 200ms ease-in-out;
+}
+
 [data-solid-image="container"] {
   width: 100%;
   height: 100%;

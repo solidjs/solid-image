@@ -170,6 +170,97 @@ describe("SolidImage in the browser", () => {
     expect(sources[0]!.srcset).toBe(`${PIXEL} 400w,${PIXEL} 800w`);
   });
 
+  it("drops the inline placeholder once the image has loaded", async () => {
+    const { host, scrollIntoView } = mount(() => (
+      <SolidImage
+        src={{
+          source: PIXEL,
+          width: 100,
+          height: 100,
+          options: {},
+          placeholder: { url: PIXEL, color: "#336699" },
+        }}
+        alt="pixel"
+        fallback={(visible, show) => (
+          <Show when={visible()}>
+            <Placeholder show={show} />
+          </Show>
+        )}
+      />
+    ));
+
+    const box = host.querySelector<HTMLElement>('[data-solid-image="aspect-ratio"]')!;
+
+    // The preview is painted before anything is fetched.
+    expect(box.style.backgroundImage).toContain(PIXEL);
+    expect(box.style.backgroundColor).toBe("rgb(51, 102, 153)");
+
+    scrollIntoView();
+
+    await expect.poll(() => findImage(host)?.style.opacity).toBe("1");
+
+    expect(box.style.backgroundImage).toBe("");
+  });
+
+  it("keeps the inline placeholder while the image is still loading", async () => {
+    const { host } = mount(() => (
+      <SolidImage
+        src={{
+          source: PIXEL,
+          width: 100,
+          height: 100,
+          options: {},
+          placeholder: { url: PIXEL, color: "#336699" },
+        }}
+        alt="pixel"
+        // This placeholder never calls show, so the image is never revealed.
+        fallback={() => <div data-test="placeholder">Loading...</div>}
+      />
+    ));
+
+    await new Promise(resolve => setTimeout(resolve, 100));
+
+    const box = host.querySelector<HTMLElement>('[data-solid-image="aspect-ratio"]')!;
+    expect(box.style.backgroundImage).toContain(PIXEL);
+  });
+
+  it("reveals the image with no fallback at all", async () => {
+    const { host, scrollIntoView } = mount(() => (
+      <SolidImage src={{ source: PIXEL, width: 100, height: 100, options: {} }} alt="pixel" />
+    ));
+
+    scrollIntoView();
+
+    await expect.poll(() => findImage(host)?.style.opacity).toBe("1");
+  });
+
+  it("passes sizes to the browser so it picks a variant", async () => {
+    const { host, scrollIntoView } = mount(() => (
+      <SolidImage
+        src={{ source: PIXEL, width: 1600, height: 900, options: {} }}
+        alt="pixel"
+        sizes="50vw"
+        transformer={{
+          transform: () => [
+            { path: PIXEL, width: 400, type: "image/webp" },
+            { path: PIXEL, width: 800, type: "image/webp" },
+          ],
+        }}
+        fallback={(visible, show) => (
+          <Show when={visible()}>
+            <Placeholder show={show} />
+          </Show>
+        )}
+      />
+    ));
+
+    scrollIntoView();
+
+    await expect.poll(() => findImage(host)).not.toBe(null);
+
+    expect(host.querySelector("source")!.sizes).toBe("50vw");
+  });
+
   it("reserves the aspect ratio before the image loads", () => {
     const { host } = mount(() => (
       <SolidImage
