@@ -1,5 +1,5 @@
 import type { JSX } from "solid-js";
-import { createMemo, createSignal, For, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
 import { ClientOnly } from "./client-only.tsx";
 import { createLazyRender } from "./create-lazy-render.ts";
 import {
@@ -8,9 +8,19 @@ import {
   mergeImageVariantsToSrcSet,
 } from "./transformer.ts";
 import type { SolidImageSource, SolidImageTransformer } from "./types.ts";
-import { getAspectRatioBoxStyle, getEmptyImageURL, getPlaceholderStyle } from "./utils.ts";
+import {
+  getAspectRatioBoxStyle,
+  getBlurhashURL,
+  getEmptyImageURL,
+  getPlaceholderStyle,
+  isBlurhashPlaceholder,
+} from "./utils.ts";
 
 import "./styles.css";
+
+// Width a BlurHash is decoded at. The browser scales it up, and a blur needs
+// few pixels, so a small canvas decodes fast and looks the same.
+const BLURHASH_WIDTH = 32;
 
 export interface SolidImageProps<T> {
   /** The image, its intrinsic size and any options the transformer needs. */
@@ -126,6 +136,21 @@ export function SolidImage<T>(props: SolidImageProps<T>): JSX.Element {
         }),
   );
 
+  // Decoding a BlurHash needs a canvas. Effects only run in the browser, so the
+  // server paints the average color and the blur follows once decoded.
+  const [blurhashURL, setBlurhashURL] = createSignal<string>();
+  createEffect(() => {
+    const placeholder = props.src.placeholder;
+    if (!placeholder || !isBlurhashPlaceholder(placeholder)) {
+      setBlurhashURL(undefined);
+      return;
+    }
+
+    const ratio = width() > 0 ? height() / width() : 1;
+    const decodedHeight = Math.max(1, Math.round(BLURHASH_WIDTH * ratio));
+    setBlurhashURL(getBlurhashURL(placeholder, BLURHASH_WIDTH, decodedHeight));
+  });
+
   const boxStyle = createMemo(() => {
     const style = getAspectRatioBoxStyle({
       width: width(),
@@ -139,7 +164,8 @@ export function SolidImage<T>(props: SolidImageProps<T>): JSX.Element {
       return style;
     }
 
-    return { ...style, ...getPlaceholderStyle(placeholder) };
+    const url = isBlurhashPlaceholder(placeholder) ? blurhashURL() : placeholder.url;
+    return { ...style, ...getPlaceholderStyle({ color: placeholder.color, url }) };
   });
 
   return (

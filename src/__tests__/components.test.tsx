@@ -1,6 +1,6 @@
 import { createRoot } from "solid-js";
 import { renderToString } from "solid-js/web";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ClientOnly, createClientSignal } from "../core/client-only";
 import { createLazyRender } from "../core/create-lazy-render";
 import { SolidImage } from "../core/index";
@@ -197,6 +197,29 @@ describe("SolidImage SSR", () => {
     expect(html).toContain("background-color:#336699");
     expect(html).toContain("background-image:url(&quot;data:image/webp;base64,AAA&quot;)");
     expect(html).toContain("background-size:cover");
+  });
+
+  it("paints only the average color of a BlurHash on the server", () => {
+    const decode = vi.fn(() => new Uint8ClampedArray(4));
+
+    const html = renderToString(() => (
+      <SolidImage
+        src={{
+          source: "/hero.png",
+          width: 1600,
+          height: 900,
+          options: {},
+          placeholder: { hash: "LEHV6nWB2yk8pyo0adR*.7kCMdnj", color: "#336699", decode },
+        }}
+        alt="hero"
+        fallback={() => <div>loading</div>}
+      />
+    ));
+
+    expect(html).toContain("background-color:#336699");
+    expect(html).not.toContain("background-image");
+    // Decoding needs a canvas, so the server never calls it.
+    expect(decode).not.toHaveBeenCalled();
   });
 
   it("renders no placeholder background when the source has none", () => {

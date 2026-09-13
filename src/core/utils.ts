@@ -1,6 +1,6 @@
 import type { JSX } from "solid-js";
 import type { AspectRatio } from "./aspect-ratio";
-import type { SolidImagePlaceholder } from "./types";
+import type { SolidImageBlurhashPlaceholder, SolidImagePlaceholder } from "./types";
 
 function kebabify(str: string): string {
   return str
@@ -40,16 +40,57 @@ export function getAspectRatioBoxStyle(ratio: AspectRatio): JSX.CSSProperties {
 }
 
 /**
- * Style that paints the inline preview behind the image.
+ * Style that paints the preview behind the image.
  * The preview is a few pixels wide, so the browser scales it up and blurs it.
+ * Without a URL only the color is painted.
  */
-export function getPlaceholderStyle(placeholder: SolidImagePlaceholder): JSX.CSSProperties {
-  return {
+export function getPlaceholderStyle(placeholder: {
+  color: string;
+  url?: string | undefined;
+}): JSX.CSSProperties {
+  const style: JSX.CSSProperties = {
     "background-color": placeholder.color,
-    "background-image": `url("${placeholder.url}")`,
-    "background-size": "cover",
-    "background-position": "center",
   };
+
+  if (placeholder.url) {
+    style["background-image"] = `url("${placeholder.url}")`;
+    style["background-size"] = "cover";
+    style["background-position"] = "center";
+  }
+
+  return style;
+}
+
+/** Tells a BlurHash preview apart from an inline image preview. */
+export function isBlurhashPlaceholder(
+  placeholder: SolidImagePlaceholder | SolidImageBlurhashPlaceholder,
+): placeholder is SolidImageBlurhashPlaceholder {
+  return "hash" in placeholder;
+}
+
+/**
+ * Decodes a BlurHash into a PNG data URL of the given size.
+ * It draws on a canvas, so call it in the browser only.
+ */
+export function getBlurhashURL(
+  placeholder: SolidImageBlurhashPlaceholder,
+  width: number,
+  height: number,
+): string | undefined {
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+
+  const context = canvas.getContext("2d");
+  if (!context) {
+    return undefined;
+  }
+
+  const image = context.createImageData(width, height);
+  image.data.set(placeholder.decode(placeholder.hash, width, height));
+  context.putImageData(image, 0, 0);
+
+  return canvas.toDataURL();
 }
 
 /** Returns an empty SVG of the given size. */

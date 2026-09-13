@@ -47,6 +47,19 @@ export interface SolidImagePlaceholder {
 }
 
 /**
+ * A BlurHash preview of an image.
+ * The hash is a short string that the browser decodes into a blurred image.
+ */
+export interface SolidImageBlurhashPlaceholder {
+  /** The encoded BlurHash. */
+  hash: string;
+  /** Average color of the image, as a hex string. It is painted until the hash is decoded. */
+  color: string;
+  /** Decodes the hash into RGBA pixels. This is `decode` from the `blurhash` package. */
+  decode: (hash: string, width: number, height: number) => Uint8ClampedArray;
+}
+
+/**
  * An image source
  */
 export interface SolidImageSource<T> {
@@ -55,7 +68,7 @@ export interface SolidImageSource<T> {
   height: number;
   options: T;
   /** Inline preview shown until the image has loaded. */
-  placeholder?: SolidImagePlaceholder;
+  placeholder?: SolidImagePlaceholder | SolidImageBlurhashPlaceholder;
 }
 
 /**

@@ -1,5 +1,6 @@
 import { onMount, Show } from "solid-js";
 import { render } from "solid-js/web";
+import { decode } from "blurhash";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SolidImage } from "../../core/index";
 import "../../core/styles.css";
@@ -222,6 +223,51 @@ describe("SolidImage in the browser", () => {
 
     const box = host.querySelector<HTMLElement>('[data-solid-image="aspect-ratio"]')!;
     expect(box.style.backgroundImage).toContain(PIXEL);
+  });
+
+  it("decodes a BlurHash into the preview and drops it once the image loads", async () => {
+    const hash = "LEHV6nWB2yk8pyo0adR*.7kCMdnj";
+    const calls: [string, number, number][] = [];
+
+    const { host, scrollIntoView } = mount(() => (
+      <SolidImage
+        src={{
+          source: PIXEL,
+          width: 1600,
+          height: 900,
+          options: {},
+          placeholder: {
+            hash,
+            color: "#336699",
+            decode: (value, width, height) => {
+              calls.push([value, width, height]);
+              return decode(value, width, height);
+            },
+          },
+        }}
+        alt="pixel"
+        fallback={(visible, show) => (
+          <Show when={visible()}>
+            <Placeholder show={show} />
+          </Show>
+        )}
+      />
+    ));
+
+    const box = host.querySelector<HTMLElement>('[data-solid-image="aspect-ratio"]')!;
+
+    // The hash is decoded before the image is anywhere near the viewport.
+    await expect.poll(() => box.style.backgroundImage).toContain("data:image/png");
+    expect(box.style.backgroundColor).toBe("rgb(51, 102, 153)");
+    // Decoded small, at the aspect ratio of the image.
+    expect(calls).toEqual([[hash, 32, 18]]);
+
+    scrollIntoView();
+
+    await expect.poll(() => findImage(host)?.style.opacity).toBe("1");
+
+    expect(box.style.backgroundImage).toBe("");
+    expect(box.style.backgroundColor).toBe("");
   });
 
   it("reveals the image with no fallback at all", async () => {

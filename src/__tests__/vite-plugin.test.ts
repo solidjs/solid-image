@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { isBlurhashValid } from "blurhash";
 import sharp from "sharp";
 import type { Plugin } from "vite";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -30,6 +31,12 @@ function callConfigResolved(
   const hook = plugin.configResolved as any;
   const fn = typeof hook === "function" ? hook : hook.handler;
   fn.call({} as any, { command, cacheDir, publicDir } as any);
+}
+
+function callBuildStart(plugin: Plugin) {
+  const hook = plugin.buildStart as any;
+  const fn = typeof hook === "function" ? hook : hook.handler;
+  return fn.call({} as any, {} as any);
 }
 
 function getPlugin(plugins: Plugin[], name: string): Plugin {
@@ -537,6 +544,147 @@ describe("local images", () => {
     expect(code).toContain("variant_png_400");
     expect(code).toContain("variant_jpeg_400");
     expect(code).toContain("variant_webp_400");
+  });
+});
+
+describe("blurhash placeholder", () => {
+  // The example hash from the BlurHash project, at 4 by 3 components.
+  const EXAMPLE_HASH = "LEHV6nWB2yk8pyo0adR*.7kCMdnj";
+
+  let dir: string;
+
+  beforeAll(async () => {
+    dir = await fs.mkdtemp(path.join(os.tmpdir(), "solid-image-blurhash-"));
+    await sharp({ create: { width: 320, height: 180, channels: 3, background: "#336699" } })
+      .png()
+      .toFile(path.join(dir, "photo.png"));
+  });
+
+  afterAll(async () => {
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  function createPlugin(placeholder: NonNullable<SolidImageOptions["local"]>["placeholder"]) {
+    return getPlugin(
+      imagePlugin({
+        local: { sizes: [400], output: ["webp"], publicPath: path.join(dir, "public"), placeholder },
+      }),
+      "solid-start:image/local",
+    );
+  }
+
+  // The first character of a hash holds its component counts, in base 83.
+  function readComponents(hash: string): [number, number] {
+    const flag =
+      "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz#$%*+,-.:;=?@[]^_{|}~".indexOf(
+        hash[0]!,
+      );
+    return [(flag % 9) + 1, Math.floor(flag / 9) + 1];
+  }
+
+  function readPlaceholder(code: string) {
+    return JSON.parse(/placeholder: \{ \.\.\.(\{.+?\}), decode \}/.exec(code)![1]!);
+  }
+
+  it("ships a BlurHash and imports the decoder", async () => {
+    const code: string = await callLoad(
+      createPlugin({ type: "blurhash" }),
+      path.join(dir, "photo.png?image-source"),
+    );
+
+    expect(code).toContain('import { decode } from "blurhash";');
+
+    const placeholder = readPlaceholder(code);
+    expect(isBlurhashValid(placeholder.hash).result).toBe(true);
+    // The 320 by 180 fixture is 16:9, which gets 5 by 3 components.
+    expect(readComponents(placeholder.hash)).toEqual([5, 3]);
+    // A flat image averages to its own color.
+    expect(placeholder.color).toBe("#336699");
+    expect(placeholder.url).toBeUndefined();
+  });
+
+  it("picks the components per image from its aspect ratio", async () => {
+    await sharp({ create: { width: 180, height: 320, channels: 3, background: "#336699" } })
+      .png()
+      .toFile(path.join(dir, "portrait.png"));
+    await sharp({ create: { width: 400, height: 40, channels: 3, background: "#336699" } })
+      .png()
+      .toFile(path.join(dir, "banner.png"));
+
+    const plugin = createPlugin({ type: "blurhash" });
+    const portrait: string = await callLoad(plugin, path.join(dir, "portrait.png?image-source"));
+    const banner: string = await callLoad(plugin, path.join(dir, "banner.png?image-source"));
+
+    expect(readComponents(readPlaceholder(portrait).hash)).toEqual([3, 5]);
+    expect(readComponents(readPlaceholder(banner).hash)).toEqual([9, 1]);
+  });
+
+  it("does not import blurhash for the default preview", async () => {
+    const code: string = await callLoad(
+      createPlugin(undefined),
+      path.join(dir, "photo.png?image-source"),
+    );
+
+    expect(code).not.toContain("blurhash");
+  });
+
+  it("loads blurhash when the build starts", async () => {
+    await expect(callBuildStart(createPlugin({ type: "blurhash" }))).resolves.toBeUndefined();
+  });
+
+  it("explains how to install blurhash when it is missing", async () => {
+    vi.doMock("blurhash", () => {
+      throw new Error("Cannot find package 'blurhash'");
+    });
+
+    try {
+      await expect(callBuildStart(createPlugin({ type: "blurhash" }))).rejects.toThrow(
+        'The BlurHash placeholder needs the "blurhash" package. Install it with `npm i blurhash`.',
+      );
+    } finally {
+      vi.doUnmock("blurhash");
+    }
+  });
+
+  it("imports the decoder for a remote BlurHash", async () => {
+    const plugin = getPlugin(
+      imagePlugin({
+        remote: {
+          transformURL: () => ({
+            src: {
+              source: "/a.jpg",
+              width: 4,
+              height: 3,
+              placeholder: { hash: EXAMPLE_HASH, color: "#336699" },
+            },
+            variants: [],
+          }),
+        },
+      }),
+      "solid-start:image/remote",
+    );
+
+    const code: string = await callLoad(plugin, "image:a");
+
+    expect(code).toContain('import { decode } from "blurhash";');
+    expect(code).toContain("placeholder: { ...SRC.placeholder, decode }");
+    expect(code).toContain(EXAMPLE_HASH);
+  });
+
+  it("does not import blurhash for a remote image without a hash", async () => {
+    const plugin = getPlugin(
+      imagePlugin({
+        remote: {
+          transformURL: () => ({
+            src: { source: "/a.jpg", width: 4, height: 3 },
+            variants: [],
+          }),
+        },
+      }),
+      "solid-start:image/remote",
+    );
+
+    expect(await callLoad(plugin, "image:a")).not.toContain("blurhash");
   });
 });
 

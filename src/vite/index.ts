@@ -3,13 +3,19 @@ import path from "node:path";
 import type { Plugin } from "vite";
 import { getFilesFromFormat, getMIMEFromFormat, getOutputFileFromFormat } from "../core/transformer.ts";
 import type {
+  SolidImageBlurhashPlaceholder,
   SolidImageFile,
   SolidImageFormat,
   SolidImagePlaceholder,
   SolidImageVariant,
 } from "../core/types.ts";
 import { fileExists, getFileSignature, outputFile } from "./fs.ts";
-import { getImageData, getPlaceholderData, transformImage } from "./transformers.ts";
+import {
+  getBlurhashData,
+  getImageData,
+  getPlaceholderData,
+  transformImage,
+} from "./transformers.ts";
 import xxHash32 from "./xxhash32.ts";
 
 const DEFAULT_INPUT: SolidImageFormat[] = ["png", "jpeg", "webp"];
@@ -21,6 +27,14 @@ const DEFAULT_QUALITY = 80;
 const DEFAULT_PLACEHOLDER_SIZE = 20;
 
 type MaybePromise<T> = T | Promise<T>;
+
+/**
+ * Turns on a BlurHash preview instead of the inline image preview.
+ * The number of components is picked per image from its aspect ratio.
+ */
+export interface BlurhashPlaceholderOptions {
+  type: "blurhash";
+}
 
 export interface SolidImageOptions {
   /** Handles imports that end with `?image`. */
@@ -36,10 +50,14 @@ export interface SolidImageOptions {
     /** Directory the dev server writes processed files to. Defaults to Vite's `publicDir`. */
     publicPath?: string;
     /**
-     * Inline preview shown until the image has loaded.
-     * Set to `false` to skip it, or give a width in pixels. Defaults to 20.
+     * Preview shown until the image has loaded. Defaults to a 20px inline image.
+     *
+     * - Set to `false` to skip it.
+     * - Give `{ size }` to change the width of the inline image.
+     * - Give `{ type: "blurhash" }` to use a BlurHash instead. It needs the
+     *   `blurhash` package installed.
      */
-    placeholder?: boolean | { size?: number };
+    placeholder?: boolean | { type?: "image"; size?: number } | BlurhashPlaceholderOptions;
   };
   /** Handles imports that start with `image:`. */
   remote?: {
@@ -49,7 +67,7 @@ export interface SolidImageOptions {
         source: string;
         width: number;
         height: number;
-        placeholder?: SolidImagePlaceholder;
+        placeholder?: SolidImagePlaceholder | Omit<SolidImageBlurhashPlaceholder, "decode">;
       };
       variants: SolidImageVariant | SolidImageVariant[];
     }>;
@@ -68,6 +86,58 @@ function getValidFileExtensions(formats: SolidImageFormat[]): Set<string> {
 
 function isValidFileExtension(extensions: Set<string>, target: string): target is SolidImageFile {
   return extensions.has(target);
+}
+
+type ResolvedPlaceholder =
+  | { type: "none" }
+  | { type: "image"; size: number }
+  | { type: "blurhash" };
+
+function resolvePlaceholder(
+  option: NonNullable<SolidImageOptions["local"]>["placeholder"],
+): ResolvedPlaceholder {
+  if (option === false) {
+    return { type: "none" };
+  }
+  if (option === undefined || option === true) {
+    return { type: "image", size: DEFAULT_PLACEHOLDER_SIZE };
+  }
+  if (option.type === "blurhash") {
+    return { type: "blurhash" };
+  }
+  return { type: "image", size: option.size ?? DEFAULT_PLACEHOLDER_SIZE };
+}
+
+/**
+ * Loads the `blurhash` package.
+ * It is only needed for the BlurHash preview, so it is an optional peer
+ * dependency that the app installs itself.
+ */
+async function loadBlurhash(): Promise<typeof import("blurhash")> {
+  try {
+    return await import("blurhash");
+  } catch (error) {
+    throw new Error(
+      'The BlurHash placeholder needs the "blurhash" package. Install it with `npm i blurhash`.',
+      { cause: error },
+    );
+  }
+}
+
+async function getPlaceholder(
+  imagePath: string,
+  placeholder: ResolvedPlaceholder,
+): Promise<SolidImagePlaceholder | Omit<SolidImageBlurhashPlaceholder, "decode"> | undefined> {
+  switch (placeholder.type) {
+    case "none":
+      return undefined;
+    case "image":
+      return await getPlaceholderData(imagePath, placeholder.size);
+    case "blurhash": {
+      const { encode } = await loadBlurhash();
+      return await getBlurhashData(imagePath, encode);
+    }
+  }
 }
 
 /**
@@ -101,21 +171,25 @@ async function getImageSource(
   relativePath: string,
   fallback: SolidImageFormat,
   sizes: number[],
-  placeholderSize: number | false,
+  placeholder: ResolvedPlaceholder,
 ): Promise<string> {
-  const [imageData, placeholder] = await Promise.all([
+  const [imageData, preview] = await Promise.all([
     getImageData(imagePath),
-    placeholderSize === false ? undefined : getPlaceholderData(imagePath, placeholderSize),
+    getPlaceholder(imagePath, placeholder),
   ]);
   const largestSize = Math.max(...getEffectiveSizes(sizes, imageData.width));
+  // A BlurHash is decoded in the browser. The module brings the decoder along,
+  // so only apps that turned the BlurHash preview on import the package.
+  const isBlurhash = placeholder.type === "blurhash";
   const variantPath = `${relativePath}?image-raw-${fallback}-${largestSize}`;
 
   return `
 import source from ${JSON.stringify(variantPath)};
+${isBlurhash ? 'import { decode } from "blurhash";' : ""}
 export default {
   width: ${JSON.stringify(imageData.width)},
   height: ${JSON.stringify(imageData.height)},
-  placeholder: ${JSON.stringify(placeholder)},
+  placeholder: ${isBlurhash ? `{ ...${JSON.stringify(preview)}, decode }` : JSON.stringify(preview)},
   source,
 };
 `;
@@ -187,9 +261,13 @@ export const imagePlugin = (options: SolidImageOptions) => {
 
           const result = await transformUrl(param);
 
-          return `const VARIANTS = ${JSON.stringify(result.variants)};
+          const remotePlaceholder = result.src.placeholder;
+          const isBlurhash = remotePlaceholder != null && "hash" in remotePlaceholder;
+
+          return `${isBlurhash ? 'import { decode } from "blurhash";\n' : ""}const SRC = ${JSON.stringify(result.src)};
+const VARIANTS = ${JSON.stringify(result.variants)};
 export default {
-  src: ${JSON.stringify(result.src)},
+  src: ${isBlurhash ? "{ ...SRC, placeholder: { ...SRC.placeholder, decode } }" : "SRC"},
   transformer: {
     transform() {
       return VARIANTS;
@@ -209,13 +287,7 @@ export default {
     const publicPathOption = options.local.publicPath;
     // Replaced by Vite's public directory once the config is resolved.
     let publicPath = publicPathOption ?? "public";
-    const placeholder = options.local.placeholder ?? true;
-    const placeholderSize =
-      placeholder === false
-        ? false
-        : placeholder === true
-          ? DEFAULT_PLACEHOLDER_SIZE
-          : (placeholder.size ?? DEFAULT_PLACEHOLDER_SIZE);
+    const placeholder = resolvePlaceholder(options.local.placeholder);
     // The last output format is the least preferred one, so it is the format
     // every browser is expected to read.
     const fallbackFormat = outputFormat[outputFormat.length - 1]!;
@@ -229,6 +301,11 @@ export default {
     plugins.push({
       name: "solid-start:image/local",
       enforce: "pre",
+      async buildStart() {
+        if (placeholder.type === "blurhash") {
+          await loadBlurhash();
+        }
+      },
       configResolved(config) {
         isBuild = config.command === "build";
         if (config.cacheDir) {
@@ -268,7 +345,7 @@ export default {
             relativePath,
             fallbackFormat,
             sizes,
-            placeholderSize,
+            placeholder,
           );
         }
         // Get the transformer file
