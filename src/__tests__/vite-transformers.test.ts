@@ -3,7 +3,8 @@ import os from "node:os";
 import path from "node:path";
 import sharp from "sharp";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { getImageData, transformImage } from "../vite/transformers";
+import { decode, encode, isBlurhashValid } from "blurhash";
+import { getBlurhashData, getImageData, transformImage } from "../vite/transformers";
 
 let dir: string;
 let imagePath: string;
@@ -59,5 +60,46 @@ describe("transformImage", () => {
       expect(meta.format).toBe(reported);
       expect(meta.width).toBe(100);
     }
+  });
+});
+
+describe("getBlurhashData", () => {
+  it("encodes a valid BlurHash with the requested components", async () => {
+    const { hash } = await getBlurhashData(imagePath, encode, 3, 2);
+
+    expect(isBlurhashValid(hash).result).toBe(true);
+    expect(hash).toHaveLength(4 + 2 * 3 * 2);
+  });
+
+  it("reports the average color, which is the color the hash encodes", async () => {
+    const { color } = await getBlurhashData(imagePath, encode, 4, 3);
+    expect(color).toBe("#112233");
+
+    // With one component the hash keeps only its base color, so it decodes
+    // exactly. More components add detail terms that BlurHash rounds, which
+    // shifts a flat image by a few levels.
+    const { hash } = await getBlurhashData(imagePath, encode, 1, 1);
+    const pixels = decode(hash, 4, 4);
+    for (let i = 0; i < pixels.length; i += 4) {
+      expect([pixels[i], pixels[i + 1], pixels[i + 2]]).toEqual([0x11, 0x22, 0x33]);
+    }
+  });
+
+  it("encodes a small copy instead of every pixel", async () => {
+    const seen: [number, number][] = [];
+
+    await getBlurhashData(
+      imagePath,
+      (pixels, width, height, componentX, componentY) => {
+        seen.push([width, height]);
+        expect(pixels.length).toBe(width * height * 4);
+        return encode(pixels, width, height, componentX, componentY);
+      },
+      4,
+      3,
+    );
+
+    // The 800 by 400 source is reduced to fit inside 32 pixels.
+    expect(seen).toEqual([[32, 16]]);
   });
 });

@@ -20,6 +20,7 @@ Requirements:
 
 - `solid-js` 1.9.9 or newer, and Vite 8 or newer. Both are peer dependencies.
 - Node 24 or newer for the Vite plugin. It uses [`sharp`](https://sharp.pixelplumbing.com) to process images.
+- [`blurhash`](https://github.com/woltapp/blurhash) 2 or newer, only for the BlurHash preview. It is an optional peer dependency.
 
 ## Setup
 
@@ -207,6 +208,12 @@ interface SolidImagePlaceholder {
   color: string;
 }
 
+interface SolidImageBlurhashPlaceholder {
+  hash: string;
+  color: string;
+  decode: (hash: string, width: number, height: number) => Uint8ClampedArray;
+}
+
 interface SolidImageVariant {
   path: string;
   width: number;
@@ -249,7 +256,7 @@ Handles imports ending in `?image`.
 | `input` | `SolidImageFormat[]` | `["png", "jpeg", "webp"]` | Source formats to process. Other files are left alone. |
 | `output` | `SolidImageFormat[]` | `["png", "jpeg", "webp"]` | Formats to emit. |
 | `publicPath` | `string` | `"dist"` | Directory the processed files are written to. |
-| `placeholder` | `boolean \| { size?: number }` | `true` | Inline preview of the image. Set a `size` in pixels, or `false` to skip it. |
+| `placeholder` | `boolean \| { size?: number } \| { type: "blurhash" }` | `true` | Preview shown while the image loads. See [BlurHash preview](#blurhash-preview). |
 
 - One file is emitted per output format and per size. `output: ["webp", "jpeg"]` with `sizes: [480, 800]` gives four files per image.
 - On build the files go through the bundler as assets, so `base`, `assetsDir` and the build manifest apply to them. Nothing is written to `publicPath`.
@@ -260,6 +267,28 @@ Handles imports ending in `?image`.
 - An image is encoded once and reused. The dev server reuses the file in `publicPath`. A build reuses its copy in the Vite cache directory.
 - Editing an image or changing an option produces a new name, so a stale file is never served.
 
+#### BlurHash preview
+
+The default preview is a 20px image inlined as a data URL. A [BlurHash](https://blurha.sh) is a string of about 30 characters that the browser decodes into a blur. Turn it on in the plugin:
+
+```bash
+npm i blurhash
+```
+
+```ts
+imagePlugin({
+  local: {
+    sizes: [480, 800, 1200],
+    placeholder: { type: "blurhash" },
+  },
+});
+```
+
+- `blurhash` is an optional peer dependency. Install it yourself. The plugin fails at startup with install steps when it is missing.
+- `componentX` and `componentY` set how much detail the hash keeps. Each goes from 1 to 9, and the defaults are 4 and 3.
+- The server paints the average color of the image. The browser decodes the hash into a 32px wide canvas and paints it over that color.
+- Only apps that turn it on import `blurhash`. The component itself never does.
+
 #### `options.remote`
 
 Handles imports starting with `image:`.
@@ -268,12 +297,12 @@ Handles imports starting with `image:`.
 | --- | --- | --- |
 | `transformURL` | `(url: string) => MaybePromise<{ src, variants }>` | Maps the text after `image:` to a source and its variants. |
 
-`src` is `{ source, width, height }`, and may carry a `placeholder` of `{ url, color }`. `variants` is one `SolidImageVariant` or an array of them.
+`src` is `{ source, width, height }`, and may carry a `placeholder`. Return `{ url, color }` for an image preview, or `{ hash, color }` for a BlurHash. The plugin adds the decoder for a hash. `variants` is one `SolidImageVariant` or an array of them.
 
 ## How it works
 
 1. `SolidImage` renders a padding based aspect ratio box, so the layout is stable before the image arrives.
-2. The box is painted with the inline preview and the dominant color, when the source carries a placeholder. The preview is a few pixels wide, so the browser scales it up into a blur.
+2. The box is painted with the preview and its color, when the source carries a placeholder. An image preview is a few pixels wide, so the browser scales it up into a blur. A BlurHash is decoded in the browser, and the server paints its average color until then.
 3. An `IntersectionObserver` watches the container. Nothing loads until it enters the viewport.
 4. Once visible, the `<img>` and your placeholder render. The image starts transparent.
 5. Your placeholder calls `onLoad` to say it is on screen.

@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { isBlurhashValid } from "blurhash";
 import sharp from "sharp";
 import type { Plugin } from "vite";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -25,6 +26,12 @@ function callConfigResolved(plugin: Plugin, command: "build" | "serve", cacheDir
   const hook = plugin.configResolved as any;
   const fn = typeof hook === "function" ? hook : hook.handler;
   fn.call({} as any, { command, cacheDir } as any);
+}
+
+function callBuildStart(plugin: Plugin) {
+  const hook = plugin.buildStart as any;
+  const fn = typeof hook === "function" ? hook : hook.handler;
+  return fn.call({} as any, {} as any);
 }
 
 function getPlugin(plugins: Plugin[], name: string): Plugin {
@@ -469,5 +476,139 @@ describe("local images", () => {
     expect(code).toContain("variant_png_400");
     expect(code).toContain("variant_jpeg_400");
     expect(code).toContain("variant_webp_400");
+  });
+});
+
+describe("blurhash placeholder", () => {
+  // The example hash from the BlurHash project, at 4 by 3 components.
+  const EXAMPLE_HASH = "LEHV6nWB2yk8pyo0adR*.7kCMdnj";
+
+  let dir: string;
+
+  beforeAll(async () => {
+    dir = await fs.mkdtemp(path.join(os.tmpdir(), "solid-image-blurhash-"));
+    await sharp({ create: { width: 320, height: 180, channels: 3, background: "#336699" } })
+      .png()
+      .toFile(path.join(dir, "photo.png"));
+  });
+
+  afterAll(async () => {
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  function createPlugin(placeholder: NonNullable<SolidImageOptions["local"]>["placeholder"]) {
+    return getPlugin(
+      imagePlugin({
+        local: { sizes: [400], output: ["webp"], publicPath: path.join(dir, "public"), placeholder },
+      }),
+      "solid-start:image/local",
+    );
+  }
+
+  function readPlaceholder(code: string) {
+    return JSON.parse(/placeholder: \{ \.\.\.(\{.+?\}), decode \}/.exec(code)![1]!);
+  }
+
+  it("ships a BlurHash and imports the decoder", async () => {
+    const code: string = await callLoad(
+      createPlugin({ type: "blurhash" }),
+      path.join(dir, "photo.png?image-source"),
+    );
+
+    expect(code).toContain('import { decode } from "blurhash";');
+
+    const placeholder = readPlaceholder(code);
+    expect(isBlurhashValid(placeholder.hash).result).toBe(true);
+    // 4 characters of header, then 2 for each component. The default is 4 by 3.
+    expect(placeholder.hash).toHaveLength(4 + 2 * 4 * 3);
+    // A flat image averages to its own color.
+    expect(placeholder.color).toBe("#336699");
+    expect(placeholder.url).toBeUndefined();
+  });
+
+  it("uses the configured number of components", async () => {
+    const code: string = await callLoad(
+      createPlugin({ type: "blurhash", componentX: 2, componentY: 2 }),
+      path.join(dir, "photo.png?image-source"),
+    );
+
+    expect(readPlaceholder(code).hash).toHaveLength(4 + 2 * 2 * 2);
+  });
+
+  it("rejects components outside 1 to 9 when the plugin is created", () => {
+    expect(() => createPlugin({ type: "blurhash", componentX: 10 })).toThrow(
+      "BlurHash componentX must be a whole number from 1 to 9, got 10.",
+    );
+    expect(() => createPlugin({ type: "blurhash", componentY: 0 })).toThrow(
+      "BlurHash componentY must be a whole number from 1 to 9, got 0.",
+    );
+  });
+
+  it("does not import blurhash for the default preview", async () => {
+    const code: string = await callLoad(
+      createPlugin(undefined),
+      path.join(dir, "photo.png?image-source"),
+    );
+
+    expect(code).not.toContain("blurhash");
+  });
+
+  it("loads blurhash when the build starts", async () => {
+    await expect(callBuildStart(createPlugin({ type: "blurhash" }))).resolves.toBeUndefined();
+  });
+
+  it("explains how to install blurhash when it is missing", async () => {
+    vi.doMock("blurhash", () => {
+      throw new Error("Cannot find package 'blurhash'");
+    });
+
+    try {
+      await expect(callBuildStart(createPlugin({ type: "blurhash" }))).rejects.toThrow(
+        'The BlurHash placeholder needs the "blurhash" package. Install it with `npm i blurhash`.',
+      );
+    } finally {
+      vi.doUnmock("blurhash");
+    }
+  });
+
+  it("imports the decoder for a remote BlurHash", async () => {
+    const plugin = getPlugin(
+      imagePlugin({
+        remote: {
+          transformURL: () => ({
+            src: {
+              source: "/a.jpg",
+              width: 4,
+              height: 3,
+              placeholder: { hash: EXAMPLE_HASH, color: "#336699" },
+            },
+            variants: [],
+          }),
+        },
+      }),
+      "solid-start:image/remote",
+    );
+
+    const code: string = await callLoad(plugin, "image:a");
+
+    expect(code).toContain('import { decode } from "blurhash";');
+    expect(code).toContain("placeholder: { ...SRC.placeholder, decode }");
+    expect(code).toContain(EXAMPLE_HASH);
+  });
+
+  it("does not import blurhash for a remote image without a hash", async () => {
+    const plugin = getPlugin(
+      imagePlugin({
+        remote: {
+          transformURL: () => ({
+            src: { source: "/a.jpg", width: 4, height: 3 },
+            variants: [],
+          }),
+        },
+      }),
+      "solid-start:image/remote",
+    );
+
+    expect(await callLoad(plugin, "image:a")).not.toContain("blurhash");
   });
 });

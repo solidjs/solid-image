@@ -5,6 +5,8 @@ import {
   getEmptySVGPlaceholder,
   getEncodedOptionalSVG,
   getEncodedSVG,
+  getPlaceholderStyle,
+  isBlurhashPlaceholder,
 } from "../core/utils";
 
 describe("getAspectRatioBoxStyle", () => {
@@ -83,5 +85,36 @@ describe("getEmptyImageURL", () => {
     expect(url.startsWith("data:image/svg+xml,")).toBe(true);
     expect(decodeURIComponent(url)).toContain('width="800"');
     expect(decodeURIComponent(url)).toContain('height="600"');
+  });
+});
+
+describe("getPlaceholderStyle", () => {
+  it("paints the preview image over its color", () => {
+    expect(getPlaceholderStyle({ color: "#336699", url: "data:image/webp;base64,AAA" })).toEqual({
+      "background-color": "#336699",
+      "background-image": 'url("data:image/webp;base64,AAA")',
+      "background-size": "cover",
+      "background-position": "center",
+    });
+  });
+
+  it("paints only the color while there is no image yet", () => {
+    expect(getPlaceholderStyle({ color: "#336699" })).toEqual({
+      "background-color": "#336699",
+    });
+  });
+});
+
+describe("isBlurhashPlaceholder", () => {
+  it("recognizes a BlurHash preview", () => {
+    const decode = () => new Uint8ClampedArray(4);
+
+    expect(isBlurhashPlaceholder({ hash: "LEHV6nWB2yk8pyo0adR*.7kCMdnj", color: "#fff", decode })).toBe(
+      true,
+    );
+  });
+
+  it("recognizes an inline image preview", () => {
+    expect(isBlurhashPlaceholder({ url: "data:image/webp;base64,AAA", color: "#fff" })).toBe(false);
   });
 });
