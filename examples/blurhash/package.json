@@ -10,12 +10,13 @@
   },
   "dependencies": {
     "@solidjs/image": "workspace:*",
+    "@solidjs/web": "2.0.0-rc.8",
     "blurhash": "^2.0.5",
-    "solid-js": "^1.9.9"
+    "solid-js": "2.0.0-rc.8"
   },
   "devDependencies": {
+    "@solidjs/vite-plugin": "3.0.0-next.43",
     "typescript": "^7.0.0",
-    "vite": "^8.1.5",
-    "vite-plugin-solid": "^2.11.11"
+    "vite": "^8.1.5"
   }
 }

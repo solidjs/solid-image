@@ -1,5 +1,5 @@
 import { SolidImage } from "@solidjs/image";
-import { createSignal, For, onMount, Show } from "solid-js";
+import { createSignal, For, onSettled, Show } from "solid-js";
 
 import fjord from "../../assets/fjord.jpg?image";
 import highlands from "../../assets/highlands.jpg?image";
@@ -16,7 +16,7 @@ const PHOTOS = [
 ];
 
 function Loading(props: { hold: boolean; show: () => void }) {
-  onMount(() => {
+  onSettled(() => {
     // The image is only revealed after `show`, so holding it back keeps the
     // preview on screen.
     if (!props.hold) {
