@@ -1,0 +1,20 @@
+{
+  "name": "@solidjs/image-example-lqip",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@solidjs/image": "workspace:*",
+    "solid-js": "^1.9.9"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.0",
+    "vite": "^8.1.5",
+    "vite-plugin-solid": "^2.11.11"
+  }
+}

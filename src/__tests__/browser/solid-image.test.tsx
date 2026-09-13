@@ -370,6 +370,48 @@ describe("SolidImage in the browser", () => {
     expect(box.getBoundingClientRect().height).toBeCloseTo(180, 0);
   });
 
+  it("does not shift the layout while the placeholder shows and the image loads", async () => {
+    let placeholderLayout: { height: number; below: number } | undefined;
+
+    const { host, scrollIntoView } = mount(() => (
+      // The PNG is 1x1, so the layout has to come from the declared size.
+      <SolidImage
+        src={{ source: PIXEL, width: 1600, height: 900, options: {} }}
+        alt="pixel"
+        fallback={(visible, show) => (
+          <Show when={visible()}>
+            <Placeholder
+              show={() => {
+                placeholderLayout = measure();
+                show();
+              }}
+            />
+          </Show>
+        )}
+      />
+    ));
+
+    // Content after the image moves if the image changes size.
+    const below = document.createElement("p");
+    below.textContent = "Below the image";
+    host.after(below);
+
+    function measure() {
+      return { height: host.getBoundingClientRect().height, below: below.offsetTop };
+    }
+
+    const initial = measure();
+    // 320px wide at 16:9.
+    expect(initial.height).toBeCloseTo(180, 0);
+
+    scrollIntoView();
+
+    await expect.poll(() => findImage(host)?.style.opacity).toBe("1");
+
+    expect(placeholderLayout).toEqual(initial);
+    expect(measure()).toEqual(initial);
+  });
+
   it("applies the shipped stylesheet to the rendered elements", () => {
     const { host } = mount(() => (
       <SolidImage

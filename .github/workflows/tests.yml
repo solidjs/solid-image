@@ -36,6 +36,9 @@ jobs:
       - name: Build
         run: pnpm build
 
+      - name: Build examples
+        run: pnpm --filter "./examples/*" build
+
       - name: Install Playwright browsers
         run: pnpm exec playwright install --with-deps chromium
 
