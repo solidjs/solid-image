@@ -254,11 +254,14 @@ Handles imports ending in `?image`.
 | `sizes` | `number[]` | required | Output widths in pixels. Height follows the aspect ratio. |
 | `quality` | `number` | `80` | Quality passed to sharp, from 1 to 100. |
 | `input` | `SolidImageFormat[]` | `["png", "jpeg", "webp"]` | Source formats to process. Other files are left alone. |
-| `output` | `SolidImageFormat[]` | `["png", "jpeg", "webp"]` | Formats to emit. |
+| `output` | `SolidImageFormat[]` | `["webp", "jpeg"]` | Formats to emit. They are offered smallest first, whatever the order here. |
 | `publicPath` | `string` | Vite's `publicDir` | Directory the dev server writes processed files to. |
 | `placeholder` | `boolean \| { size?: number } \| { type: "blurhash" }` | `true` | Preview shown while the image loads. See [BlurHash preview](#blurhash-preview). |
 
 - One file is emitted per output format and per size. `output: ["webp", "jpeg"]` with `sizes: [480, 800]` gives four files per image.
+- Formats are offered in this order: AVIF, WebP, TIFF, JPEG, PNG. The browser takes the first one it reads, and the `<img>` falls back to the last.
+- A transparent image gets PNG in place of JPEG, since JPEG would paint the transparent pixels black.
+- An opaque image drops PNG when JPEG is also listed, since JPEG is far smaller for photos. List PNG without JPEG to keep it.
 - Sizes wider than the source are dropped and replaced by the source width. An image is never enlarged.
 - Photos are turned upright using their EXIF orientation.
 - Animated images keep every frame in WebP. Other formats keep the first frame.

@@ -19,7 +19,14 @@ import {
 import xxHash32 from "./xxhash32.ts";
 
 const DEFAULT_INPUT: SolidImageFormat[] = ["png", "jpeg", "webp"];
-const DEFAULT_OUTPUT: SolidImageFormat[] = ["png", "jpeg", "webp"];
+// WebP for browsers that read it, JPEG for the rest. PNG is added per image
+// when the source is transparent.
+const DEFAULT_OUTPUT: SolidImageFormat[] = ["webp", "jpeg"];
+// Order of the `source` elements. The browser takes the first format it reads,
+// so the smallest formats come first. JPEG and PNG come last because every
+// browser reads them, and the last format is also the `img` fallback. TIFF only
+// works in Safari, so it must never be that fallback.
+const FORMAT_ORDER: SolidImageFormat[] = ["avif", "webp", "tiff", "jpeg", "png"];
 // sharp takes a quality from 1 to 100.
 const DEFAULT_QUALITY = 80;
 // Width of the inline preview, in pixels. Small enough to stay under a
@@ -43,7 +50,11 @@ export interface SolidImageOptions {
     sizes: number[];
     /** Source formats to process. Other files are left alone. Defaults to png, jpeg and webp. */
     input?: SolidImageFormat[];
-    /** Formats to emit. One file is written per format and per size. Defaults to png, jpeg and webp. */
+    /**
+     * Formats to emit. One file is written per format and per size.
+     * They are offered smallest first, whatever the order here.
+     * Defaults to webp and jpeg.
+     */
     output?: SolidImageFormat[];
     /** Quality passed to sharp, from 1 to 100. Defaults to 80. */
     quality?: number;
@@ -141,6 +152,34 @@ async function getPlaceholder(
 }
 
 /**
+ * Returns the formats to emit for one image, in the order they are offered.
+ *
+ * - Formats are sorted from the smallest to the most widely supported, whatever
+ *   order the config lists them in.
+ * - A transparent image gets PNG in place of JPEG, since JPEG has no
+ *   transparency and would paint it black.
+ * - An opaque image drops PNG when JPEG is also listed, since JPEG is far
+ *   smaller for photos.
+ */
+export function getEffectiveFormats(
+  formats: SolidImageFormat[],
+  transparent: boolean,
+): SolidImageFormat[] {
+  const result = new Set(formats);
+
+  if (result.has("jpeg")) {
+    if (transparent) {
+      result.delete("jpeg");
+      result.add("png");
+    } else {
+      result.delete("png");
+    }
+  }
+
+  return FORMAT_ORDER.filter(format => result.has(format));
+}
+
+/**
  * Returns the widths to emit for a source of the given width.
  *
  * Widths above the source are dropped, since they would only upscale it into a
@@ -169,7 +208,7 @@ export function getEffectiveSizes(sizes: number[], sourceWidth: number): number[
 async function getImageSource(
   imagePath: string,
   relativePath: string,
-  fallback: SolidImageFormat,
+  outputFormat: SolidImageFormat[],
   sizes: number[],
   placeholder: ResolvedPlaceholder,
 ): Promise<string> {
@@ -178,6 +217,9 @@ async function getImageSource(
     getPlaceholder(imagePath, placeholder),
   ]);
   const largestSize = Math.max(...getEffectiveSizes(sizes, imageData.width));
+  // The last format is the one every browser reads, so the `img` falls back to it.
+  const formats = getEffectiveFormats(outputFormat, imageData.transparent);
+  const fallback = formats[formats.length - 1]!;
   // A BlurHash is decoded in the browser. The module brings the decoder along,
   // so only apps that turned the BlurHash preview on import the package.
   const isBlurhash = placeholder.type === "blurhash";
@@ -288,9 +330,6 @@ export default {
     // Replaced by Vite's public directory once the config is resolved.
     let publicPath = publicPathOption ?? "public";
     const placeholder = resolvePlaceholder(options.local.placeholder);
-    // The last output format is the least preferred one, so it is the format
-    // every browser is expected to read.
-    const fallbackFormat = outputFormat[outputFormat.length - 1]!;
 
     const validInputFileExtensions = getValidFileExtensions(inputFormat);
 
@@ -343,15 +382,19 @@ export default {
           return await getImageSource(
             originalPath,
             relativePath,
-            fallbackFormat,
+            outputFormat,
             sizes,
             placeholder,
           );
         }
         // Get the transformer file
         if (condition.startsWith("image-transformer")) {
-          const { width } = await getImageData(originalPath);
-          return getImageTransformer(relativePath, outputFormat, getEffectiveSizes(sizes, width));
+          const { width, transparent } = await getImageData(originalPath);
+          return getImageTransformer(
+            relativePath,
+            getEffectiveFormats(outputFormat, transparent),
+            getEffectiveSizes(sizes, width),
+          );
         }
         // Image transformer variant
         if (condition.startsWith("image-raw")) {

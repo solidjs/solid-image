@@ -5,7 +5,7 @@ import { isBlurhashValid } from "blurhash";
 import sharp from "sharp";
 import type { Plugin } from "vite";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { getEffectiveSizes, imagePlugin } from "../vite/index";
+import { getEffectiveFormats, getEffectiveSizes, imagePlugin } from "../vite/index";
 import type { SolidImageOptions } from "../vite/index";
 
 // Vite hooks can be a function or an object with a handler.
@@ -537,14 +537,61 @@ describe("local images", () => {
     expect(meta.width).toBe(400);
   });
 
-  it("defaults to png, jpeg and webp output when no format is given", async () => {
+  it("defaults to webp and jpeg output, webp first", async () => {
     const plugin = createLocalPlugin({ input: undefined, output: undefined });
     const code: string = await callLoad(plugin, path.join(dir, "photo.png?image-transformer"));
 
-    expect(code).toContain("variant_png_400");
-    expect(code).toContain("variant_jpeg_400");
-    expect(code).toContain("variant_webp_400");
+    expect(code.indexOf("variant_webp_400")).toBeGreaterThan(-1);
+    expect(code.indexOf("variant_webp_400")).toBeLessThan(code.indexOf("variant_jpeg_400"));
+    expect(code).not.toContain("variant_png_");
   });
+
+  it("offers formats smallest first, whatever order the config lists", async () => {
+    const plugin = createLocalPlugin({ output: ["png", "jpeg", "webp", "avif"] });
+    const code: string = await callLoad(plugin, path.join(dir, "photo.png?image-transformer"));
+
+    const order = ["avif", "webp", "jpeg"].map(format => code.indexOf(`variant_${format}_400`));
+    expect(order.every(position => position > -1)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    // The fixture is opaque, so PNG is dropped in favor of JPEG.
+    expect(code).not.toContain("variant_png_");
+  });
+
+  it("gives a transparent image PNG in place of JPEG", async () => {
+    await sharp({
+      create: { width: 1200, height: 600, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0.5 } },
+    })
+      .png()
+      .toFile(path.join(dir, "transparent.png"));
+
+    const plugin = createLocalPlugin();
+    const transformer: string = await callLoad(
+      plugin,
+      path.join(dir, "transparent.png?image-transformer"),
+    );
+    const source: string = await callLoad(plugin, path.join(dir, "transparent.png?image-source"));
+
+    expect(transformer).toContain("variant_webp_400");
+    expect(transformer).toContain("variant_png_400");
+    expect(transformer).not.toContain("variant_jpeg_");
+    // JPEG would paint the transparent pixels black, so the fallback is PNG.
+    expect(source).toContain('import source from "./transparent.png?image-raw-png-800"');
+  });
+
+  it("treats an alpha channel with only opaque pixels as opaque", async () => {
+    await sharp({
+      create: { width: 1200, height: 600, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 1 } },
+    })
+      .png()
+      .toFile(path.join(dir, "opaque-alpha.png"));
+
+    const plugin = createLocalPlugin({ output: ["png", "jpeg"] });
+    const code: string = await callLoad(plugin, path.join(dir, "opaque-alpha.png?image-transformer"));
+
+    expect(code).toContain("variant_jpeg_400");
+    expect(code).not.toContain("variant_png_");
+  });
+
 });
 
 describe("blurhash placeholder", () => {
@@ -703,5 +750,35 @@ describe("getEffectiveSizes", () => {
 
   it("keeps the sizes as given when the source width is unknown", () => {
     expect(getEffectiveSizes([400, 400, 800], 0)).toEqual([400, 800]);
+  });
+});
+
+describe("getEffectiveFormats", () => {
+  it("sorts formats from the smallest to the most widely supported", () => {
+    expect(getEffectiveFormats(["jpeg", "webp", "avif"], false)).toEqual(["avif", "webp", "jpeg"]);
+  });
+
+  it("never leaves TIFF as the fallback", () => {
+    expect(getEffectiveFormats(["tiff", "jpeg"], false)).toEqual(["tiff", "jpeg"]);
+  });
+
+  it("drops PNG for an opaque image when JPEG is listed", () => {
+    expect(getEffectiveFormats(["png", "jpeg", "webp"], false)).toEqual(["webp", "jpeg"]);
+  });
+
+  it("keeps PNG for an opaque image when it is the only broad format", () => {
+    expect(getEffectiveFormats(["webp", "png"], false)).toEqual(["webp", "png"]);
+  });
+
+  it("swaps JPEG for PNG on a transparent image", () => {
+    expect(getEffectiveFormats(["webp", "jpeg"], true)).toEqual(["webp", "png"]);
+  });
+
+  it("does not list PNG twice when both are configured for a transparent image", () => {
+    expect(getEffectiveFormats(["png", "jpeg"], true)).toEqual(["png"]);
+  });
+
+  it("leaves formats without JPEG alone for a transparent image", () => {
+    expect(getEffectiveFormats(["avif", "webp"], true)).toEqual(["avif", "webp"]);
   });
 });

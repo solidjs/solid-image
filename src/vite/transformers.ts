@@ -151,12 +151,14 @@ export async function getBlurhashData(
 interface ImageData {
   width: number;
   height: number;
+  /** Whether any pixel is at least partly see-through. */
+  transparent: boolean;
 }
 
 /**
- * Reads the intrinsic size of an image, as it is displayed.
- * A photo with a rotated EXIF orientation reports its width and height swapped.
- * Missing values become 0.
+ * Reads the intrinsic size of an image, as it is displayed, and whether it is
+ * transparent. A photo with a rotated EXIF orientation reports its width and
+ * height swapped. Missing sizes become 0.
  */
 export async function getImageData(originalPath: string): Promise<ImageData> {
   const result = await sharp(originalPath).metadata();
@@ -164,5 +166,8 @@ export async function getImageData(originalPath: string): Promise<ImageData> {
   return {
     width: size.width || 0,
     height: size.height || 0,
+    // An alpha channel alone does not mean transparency. Many PNGs carry one
+    // with every pixel opaque, so read the pixels only when there is a channel.
+    transparent: result.hasAlpha ? !(await sharp(originalPath).stats()).isOpaque : false,
   };
 }
