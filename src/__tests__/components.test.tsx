@@ -97,11 +97,10 @@ describe("SolidImage SSR", () => {
       />
     ));
 
-    expect(html).toContain("data-start-image");
-    expect(html).toContain("test.jpg");
+    expect(html).toContain('data-solid-image="container"');
   });
 
-  it("renders without a transformer (default <source> fallback path)", () => {
+  it("renders no <source> when there is no transformer", () => {
     const html = renderToString(() => (
       <SolidImage
         src={{ source: "/hero.png", width: 800, height: 600, options: {} }}
@@ -110,7 +109,100 @@ describe("SolidImage SSR", () => {
       />
     ));
 
-    expect(html).toContain("hero.png");
+    expect(html).not.toContain("<source");
     expect(html).toContain('alt="hero image"');
+  });
+
+  it("does not request the image on the server", () => {
+    const html = renderToString(() => (
+      <SolidImage
+        src={{ source: "/hero.png", width: 800, height: 600, options: {} }}
+        alt="hero image"
+        fallback={() => <span>placeholder</span>}
+      />
+    ));
+
+    // The server placeholder is a blank SVG of the same size, so the browser
+    // does not fetch the image before it scrolls into view.
+    expect(html).not.toContain("hero.png");
+    expect(html).toContain("data:image/svg+xml,");
+    expect(html).toContain(encodeURIComponent('width="800"'));
+  });
+
+  it("renders one <source> per MIME type with a srcset", () => {
+    const html = renderToString(() => (
+      <SolidImage
+        src={{ source: "/hero.png", width: 1600, height: 900, options: {} }}
+        alt="hero"
+        transformer={{
+          transform: () => [
+            { path: "/hero-400.webp", width: 400, type: "image/webp" },
+            { path: "/hero-800.webp", width: 800, type: "image/webp" },
+            { path: "/hero-400.jpg", width: 400, type: "image/jpeg" },
+          ],
+        }}
+        fallback={() => <div>loading</div>}
+      />
+    ));
+
+    expect(html).toContain(
+      '<source data-hk="01000" type="image/webp" srcset="/hero-400.webp 400w,/hero-800.webp 800w">',
+    );
+    expect(html).toContain('type="image/jpeg" srcset="/hero-400.jpg 400w"');
+  });
+
+  it("reserves the aspect ratio box from the source size", () => {
+    const html = renderToString(() => (
+      <SolidImage
+        src={{ source: "/hero.png", width: 1600, height: 900, options: {} }}
+        alt="hero"
+        fallback={() => <div>loading</div>}
+      />
+    ));
+
+    expect(html).toContain("padding-top:56.25%");
+  });
+
+  it("forwards crossOrigin, fetchPriority and decoding to the img", () => {
+    const html = renderToString(() => (
+      <SolidImage
+        src={{ source: "/hero.png", width: 100, height: 100, options: {} }}
+        alt="hero"
+        crossOrigin="anonymous"
+        fetchPriority="high"
+        decoding="async"
+        fallback={() => <div>loading</div>}
+      />
+    ));
+
+    expect(html).toContain('crossorigin="anonymous"');
+    expect(html).toContain('fetchpriority="high"');
+    expect(html).toContain('decoding="async"');
+  });
+
+  it("does not render the fallback on the server", () => {
+    const html = renderToString(() => (
+      <SolidImage
+        src={{ source: "/hero.png", width: 100, height: 100, options: {} }}
+        alt="hero"
+        fallback={() => <div>loading</div>}
+      />
+    ));
+
+    expect(html).not.toContain("loading");
+  });
+
+  it("marks the container, aspect ratio box, picture and blocker elements", () => {
+    const html = renderToString(() => (
+      <SolidImage
+        src={{ source: "/hero.png", width: 100, height: 100, options: {} }}
+        alt="hero"
+        fallback={() => <div>loading</div>}
+      />
+    ));
+
+    for (const part of ["container", "aspect-ratio", "picture", "image", "blocker"]) {
+      expect(html).toContain(`data-solid-image="${part}"`);
+    }
   });
 });

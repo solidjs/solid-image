@@ -1,3 +1,4 @@
+// Greatest common divisor, used to reduce a size to its smallest ratio.
 function gcd(a: number, b: number): number {
   if (b === 0) {
     return a;
@@ -42,6 +43,10 @@ const VERTICAL_ASPECT_RATIO = HORIZONTAL_ASPECT_RATIO.map(item => ({
 
 const ASPECT_RATIO = [...HORIZONTAL_ASPECT_RATIO, ...VERTICAL_ASPECT_RATIO];
 
+/**
+ * Reduces a pixel size to its smallest integer ratio.
+ * A 1920x1080 image becomes 16x9.
+ */
 export function getAspectRatio({ width, height }: AspectRatio): AspectRatio {
   const denom = gcd(width, height);
 
@@ -51,6 +56,10 @@ export function getAspectRatio({ width, height }: AspectRatio): AspectRatio {
   };
 }
 
+/**
+ * Returns the known aspect ratio closest to the given one.
+ * Use it to snap an odd image size to a common ratio.
+ */
 export function getNearestAspectRatio(ratio: AspectRatio): AspectRatio {
   let nearest = Number.MAX_VALUE;
   let id = 0;
@@ -75,6 +84,10 @@ export function getNearestAspectRatio(ratio: AspectRatio): AspectRatio {
   return ASPECT_RATIO[id]!;
 }
 
+/**
+ * Scales a ratio so its larger side is 9.
+ * The ratio itself is unchanged.
+ */
 export function getScaledComponentRatio(ratio: AspectRatio): AspectRatio {
   const xScale = 9 / ratio.width;
   const yScale = 9 / ratio.height;
