@@ -1,5 +1,6 @@
 import type { JSX } from "solid-js";
 import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
+import { useAssets } from "solid-js/web";
 import { ClientOnly } from "./client-only.tsx";
 import { createLazyRender } from "./create-lazy-render.ts";
 import {
@@ -127,6 +128,34 @@ export function SolidImage<T>(props: SolidImageProps<T>): JSX.Element {
 
   const visible = createMemo(() => props.eager || laze.visible);
 
+  // An eager image is usually the largest paint on the page, so it asks for a
+  // high fetch priority. A lazy image decodes off the main thread, so scrolling
+  // stays smooth. Props that are set always win.
+  const fetchPriority = createMemo(() => props.fetchPriority ?? (props.eager ? "high" : undefined));
+  const decoding = createMemo(() => props.decoding ?? (props.eager ? undefined : "async"));
+
+  // A preload in the head lets the browser fetch an eager image before it gets
+  // to the image in the page. It names the preferred format with `type`, so a
+  // browser that cannot read that format skips the preload instead of fetching
+  // a file it will not use. This only runs on the server.
+  if (props.eager) {
+    useAssets(() => {
+      const preferred = groups()[0];
+      return (
+        <link
+          rel="preload"
+          as="image"
+          href={preferred ? undefined : props.src.source}
+          imagesrcset={preferred?.[1]}
+          imagesizes={props.sizes}
+          type={preferred?.[0]}
+          fetchpriority={fetchPriority()}
+          crossOrigin={props.crossOrigin}
+        />
+      );
+    });
+  }
+
   const serverSrc = createMemo(() =>
     props.eager
       ? props.src.source
@@ -187,8 +216,8 @@ export function SolidImage<T>(props: SolidImageProps<T>): JSX.Element {
                 height={height()}
                 alt={props.alt}
                 crossOrigin={props.crossOrigin}
-                fetchpriority={props.fetchPriority}
-                decoding={props.decoding}
+                fetchpriority={fetchPriority()}
+                decoding={decoding()}
               />
             }
           >
@@ -211,8 +240,8 @@ export function SolidImage<T>(props: SolidImageProps<T>): JSX.Element {
                   opacity: showPlaceholder() ? 0 : 1,
                 }}
                 crossOrigin={props.crossOrigin}
-                fetchpriority={props.fetchPriority}
-                decoding={props.decoding}
+                fetchpriority={fetchPriority()}
+                decoding={decoding()}
               />
             </Show>
           </ClientOnly>
@@ -234,7 +263,7 @@ export function SolidImage<T>(props: SolidImageProps<T>): JSX.Element {
                 loading="lazy"
                 alt={props.alt}
                 crossOrigin={props.crossOrigin}
-                decoding={props.decoding}
+                decoding={decoding()}
               />
             </noscript>
           }

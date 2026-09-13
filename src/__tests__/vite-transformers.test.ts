@@ -261,3 +261,25 @@ describe("transformImage output", () => {
     expect(tuned.length).toBeLessThanOrEqual(plain.length);
   });
 });
+
+describe("GIF input", () => {
+  it("keeps every frame of an animated GIF in WebP and GIF", async () => {
+    const gifPath = path.join(dir, "animated.gif");
+    const frame = (background: string) =>
+      sharp({ create: { width: 40, height: 20, channels: 3, background } }).png().toBuffer();
+    await sharp([await frame("#ff0000"), await frame("#00ff00"), await frame("#0000ff")], {
+      join: { animated: true },
+    })
+      .gif()
+      .toFile(gifPath);
+
+    for (const format of ["webp", "gif"] as const) {
+      const buffer = await transformImage(gifPath, format, 20, 80).toBuffer();
+      const meta = await sharp(buffer, { animated: true }).metadata();
+
+      expect(meta.format).toBe(format);
+      expect(meta.pages).toBe(3);
+      expect(meta.pageHeight).toBe(10);
+    }
+  });
+});

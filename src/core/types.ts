@@ -8,22 +8,25 @@ export type SolidImageMIME =
   | "image/jpeg"
   | "image/png"
   | "image/webp"
-  | "image/tiff";
+  | "image/tiff"
+  | "image/gif";
 
 export type SolidImagePNG = "png";
 export type SolidImageAVIF = "avif";
 export type SolidImageJPEG = "jpg" | "jpeg" | "jfif" | "pjpeg" | "pjp";
 export type SolidImageWebP = "webp";
 export type SolidImageTIFF = "tiff" | "tif";
+export type SolidImageGIF = "gif";
 
 export type SolidImageFile =
   | SolidImageAVIF
   | SolidImageJPEG
   | SolidImagePNG
   | SolidImageWebP
-  | SolidImageTIFF;
+  | SolidImageTIFF
+  | SolidImageGIF;
 
-export type SolidImageFormat = "avif" | "jpeg" | "png" | "webp" | "tiff";
+export type SolidImageFormat = "avif" | "jpeg" | "png" | "webp" | "tiff" | "gif";
 
 /**
  * A variant of an image source. This is used to transform a given source string

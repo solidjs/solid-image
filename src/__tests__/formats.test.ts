@@ -54,3 +54,13 @@ describe("getOutputFileFromFormat", () => {
     }
   });
 });
+
+describe("GIF", () => {
+  it("maps between its format, MIME type and file extension", () => {
+    expect(getMIMEFromFormat("gif")).toBe("image/gif");
+    expect(getFormatFromMIME("image/gif")).toBe("gif");
+    expect(getFormatFromFile("gif")).toBe("gif");
+    expect(getFilesFromFormat("gif")).toEqual(["gif"]);
+    expect(getOutputFileFromFormat("gif")).toBe("gif");
+  });
+});

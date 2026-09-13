@@ -5,7 +5,14 @@ import { isBlurhashValid } from "blurhash";
 import sharp from "sharp";
 import type { Plugin } from "vite";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { getEffectiveFormats, getEffectiveSizes, imagePlugin } from "../vite/index";
+import { getFileSignature } from "../vite/fs";
+import {
+  getEffectiveFormats,
+  getEffectiveSizes,
+  getVariantFilename,
+  imagePlugin,
+  resolveQuality,
+} from "../vite/index";
 import type { SolidImageOptions } from "../vite/index";
 
 // Vite hooks can be a function or an object with a handler.
@@ -37,6 +44,12 @@ function callBuildStart(plugin: Plugin) {
   const hook = plugin.buildStart as any;
   const fn = typeof hook === "function" ? hook : hook.handler;
   return fn.call({} as any, {} as any);
+}
+
+function callWatchChange(plugin: Plugin, id: string) {
+  const hook = plugin.watchChange as any;
+  const fn = typeof hook === "function" ? hook : hook.handler;
+  fn.call({} as any, id, { event: "update" });
 }
 
 function getPlugin(plugins: Plugin[], name: string): Plugin {
@@ -176,7 +189,7 @@ describe("local images", () => {
   });
 
   function createLocalPlugin(local?: Partial<SolidImageOptions["local"]>): Plugin {
-    return getPlugin(
+    const plugin = getPlugin(
       imagePlugin({
         local: {
           sizes: [400, 800],
@@ -189,6 +202,9 @@ describe("local images", () => {
       }),
       "solid-start:image/local",
     );
+    // Keep previews and build files inside this test's directory.
+    callConfigResolved(plugin, "serve", path.join(dir, "cache"));
+    return plugin;
   }
 
   it("resolves a ?image id next to the importer", () => {
@@ -419,7 +435,7 @@ describe("local images", () => {
     expect(first).not.toBe(second);
   });
 
-  it("gives a different file name when the source image changes", async () => {
+  it("reads a changed source again once the watcher reports it", async () => {
     const editedPath = path.join(dir, "edited.png");
     await sharp({ create: { width: 64, height: 32, channels: 3, background: "#336699" } })
       .png()
@@ -432,10 +448,121 @@ describe("local images", () => {
       .png()
       .toFile(editedPath);
 
-    const second: string = await callLoad(plugin, path.join(dir, "edited.png?image-raw-webp-400"));
+    // Within one build the file is read once, so the name stays the same.
+    const beforeWatch: string = await callLoad(plugin, path.join(dir, "edited.png?image-raw-webp-400"));
+    expect(beforeWatch).toBe(first);
 
-    expect(first).not.toBe(second);
+    callWatchChange(plugin, editedPath);
+    const afterWatch: string = await callLoad(plugin, path.join(dir, "edited.png?image-raw-webp-400"));
+    expect(afterWatch).not.toBe(first);
   });
+
+  it("encodes AVIF at 50 and other formats at 80 by default", async () => {
+    const plugin = createLocalPlugin({ quality: undefined, output: ["avif", "webp"] });
+    const signature = await getFileSignature(path.join(dir, "photo.png"));
+
+    const avif: string = await callLoad(plugin, path.join(dir, "photo.png?image-raw-avif-400"));
+    const webp: string = await callLoad(plugin, path.join(dir, "photo.png?image-raw-webp-400"));
+
+    expect(avif).toContain(getVariantFilename(signature, "avif", 400, 50));
+    expect(webp).toContain(getVariantFilename(signature, "webp", 400, 80));
+  });
+
+  it("sets quality one format at a time with an object", async () => {
+    const plugin = createLocalPlugin({ quality: { avif: 40 }, output: ["avif", "webp"] });
+    const signature = await getFileSignature(path.join(dir, "photo.png"));
+
+    const avif: string = await callLoad(plugin, path.join(dir, "photo.png?image-raw-avif-400"));
+    const webp: string = await callLoad(plugin, path.join(dir, "photo.png?image-raw-webp-400"));
+
+    expect(avif).toContain(getVariantFilename(signature, "avif", 400, 40));
+    expect(webp).toContain(getVariantFilename(signature, "webp", 400, 80));
+  });
+
+  it("reuses a cached preview instead of computing it again", async () => {
+    const cacheDir = path.join(dir, "preview-cache");
+
+    const first = createLocalPlugin();
+    callConfigResolved(first, "serve", cacheDir);
+    await callLoad(first, path.join(dir, "photo.png?image-source"));
+
+    // The plugin keeps its files in a folder of its own inside the Vite cache directory.
+    const previews = path.join(cacheDir, "solid-image", "previews");
+    const [cached] = await fs.readdir(previews);
+    await fs.writeFile(
+      path.join(previews, cached!),
+      JSON.stringify({ url: "data:image/webp;base64,CACHED", color: "#000000" }),
+    );
+
+    // A new plugin has no memory of the first one, so the preview comes from disk.
+    const second = createLocalPlugin();
+    callConfigResolved(second, "serve", cacheDir);
+    const code: string = await callLoad(second, path.join(dir, "photo.png?image-source"));
+
+    expect(code).toContain('"url":"data:image/webp;base64,CACHED"');
+  });
+
+  it("removes files unused for a week when it starts", async () => {
+    const cacheDir = path.join(dir, "prune-cache");
+    const publicDir = path.join(dir, "prune-public");
+    const plugin = createLocalPlugin({ publicPath: publicDir });
+    callConfigResolved(plugin, "serve", cacheDir);
+
+    // The plugin keeps its files in a folder of its own inside the Vite cache directory.
+    const pluginCache = path.join(cacheDir, "solid-image");
+    const stale = [
+      path.join(pluginCache, "i-old-400.webp"),
+      path.join(pluginCache, "previews", "p-old.json"),
+      path.join(publicDir, ".image", "i-old-400.webp"),
+    ];
+    const fresh = [
+      path.join(pluginCache, "i-new-400.webp"),
+      path.join(pluginCache, "previews", "p-new.json"),
+      path.join(publicDir, ".image", "i-new-400.webp"),
+    ];
+    const eightDaysAgo = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
+    for (const file of [...stale, ...fresh]) {
+      await fs.mkdir(path.dirname(file), { recursive: true });
+      await fs.writeFile(file, "x");
+    }
+    for (const file of stale) {
+      await fs.utimes(file, eightDaysAgo, eightDaysAgo);
+    }
+
+    await callBuildStart(plugin);
+
+    for (const file of stale) {
+      await expect(fs.stat(file)).rejects.toThrow();
+    }
+    for (const file of fresh) {
+      expect((await fs.stat(file)).isFile()).toBe(true);
+    }
+  });
+
+  it("processes GIF by default and keeps every frame in WebP", async () => {
+    const frame = (background: string) =>
+      sharp({ create: { width: 400, height: 200, channels: 3, background } }).png().toBuffer();
+    await sharp([await frame("#ff0000"), await frame("#00ff00"), await frame("#0000ff")], {
+      join: { animated: true },
+    })
+      .gif()
+      .toFile(path.join(dir, "animated.gif"));
+
+    const plugin = createLocalPlugin({ input: undefined });
+    const transformer: string = await callLoad(
+      plugin,
+      path.join(dir, "animated.gif?image-transformer"),
+    );
+    expect(transformer).toContain('"./animated.gif?image-webp-400"');
+
+    const code: string = await callLoad(plugin, path.join(dir, "animated.gif?image-raw-webp-400"));
+    const publicUrl = /export default "(.+)"/.exec(code)![1]!;
+    const meta = await sharp(path.join(publicPath, publicUrl), { animated: true }).metadata();
+
+    expect(meta.format).toBe("webp");
+    expect(meta.pages).toBe(3);
+  });
+
 
   it("drops sizes wider than the source and adds the source width", async () => {
     const smallPath = path.join(dir, "small.png");
@@ -612,12 +739,14 @@ describe("blurhash placeholder", () => {
   });
 
   function createPlugin(placeholder: NonNullable<SolidImageOptions["local"]>["placeholder"]) {
-    return getPlugin(
+    const plugin = getPlugin(
       imagePlugin({
         local: { sizes: [400], output: ["webp"], publicPath: path.join(dir, "public"), placeholder },
       }),
       "solid-start:image/local",
     );
+    callConfigResolved(plugin, "serve", path.join(dir, "cache"));
+    return plugin;
   }
 
   // The first character of a hash holds its component counts, in base 83.
@@ -780,5 +909,41 @@ describe("getEffectiveFormats", () => {
 
   it("leaves formats without JPEG alone for a transparent image", () => {
     expect(getEffectiveFormats(["avif", "webp"], true)).toEqual(["avif", "webp"]);
+  });
+});
+
+describe("resolveQuality", () => {
+  it("uses 50 for AVIF and 80 for the rest by default", () => {
+    const getQuality = resolveQuality(undefined);
+
+    expect(getQuality("avif")).toBe(50);
+    expect(getQuality("webp")).toBe(80);
+    expect(getQuality("jpeg")).toBe(80);
+  });
+
+  it("applies a number to every format", () => {
+    const getQuality = resolveQuality(60);
+
+    expect(getQuality("avif")).toBe(60);
+    expect(getQuality("jpeg")).toBe(60);
+  });
+
+  it("sets formats one by one and keeps defaults for the rest", () => {
+    const getQuality = resolveQuality({ avif: 45 });
+
+    expect(getQuality("avif")).toBe(45);
+    expect(getQuality("webp")).toBe(80);
+  });
+});
+
+describe("getVariantFilename", () => {
+  it("changes when the pipeline version changes", () => {
+    expect(getVariantFilename("abc", "webp", 400, 80, 1)).not.toBe(
+      getVariantFilename("abc", "webp", 400, 80, 2),
+    );
+  });
+
+  it("keeps the width and the output extension in the name", () => {
+    expect(getVariantFilename("abc", "jpeg", 400, 80)).toMatch(/^i-[0-9a-f]+-400\.jpg$/);
   });
 });

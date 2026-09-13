@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { outputFile } from "../vite/fs";
+import { outputFile, pruneStaleFiles, touchFile } from "../vite/fs";
 
 let dir: string;
 
@@ -42,5 +42,55 @@ describe("outputFile", () => {
     await outputFile(file, "second");
 
     expect(await fs.readFile(file, "utf8")).toBe("second");
+  });
+});
+
+describe("touchFile", () => {
+  it("marks the file as used now", async () => {
+    const file = path.join(dir, "a.txt");
+    await fs.writeFile(file, "a");
+    const past = new Date(2001, 0, 1);
+    await fs.utimes(file, past, past);
+
+    await touchFile(file);
+
+    expect((await fs.stat(file)).mtimeMs).toBeGreaterThan(past.getTime());
+  });
+
+  it("does not throw for a missing file", async () => {
+    await expect(touchFile(path.join(dir, "missing.txt"))).resolves.toBeUndefined();
+  });
+});
+
+describe("pruneStaleFiles", () => {
+  const DAY = 24 * 60 * 60 * 1000;
+
+  it("removes files older than the limit and keeps the rest", async () => {
+    const old = path.join(dir, "old.webp");
+    const recent = path.join(dir, "recent.webp");
+    await fs.writeFile(old, "o");
+    await fs.writeFile(recent, "r");
+    const tenDaysAgo = new Date(Date.now() - 10 * DAY);
+    await fs.utimes(old, tenDaysAgo, tenDaysAgo);
+
+    expect(await pruneStaleFiles(dir, 7 * DAY)).toBe(1);
+
+    await expect(fs.stat(old)).rejects.toThrow();
+    expect((await fs.stat(recent)).isFile()).toBe(true);
+  });
+
+  it("leaves subdirectories alone", async () => {
+    const nested = path.join(dir, "previews");
+    await fs.mkdir(nested);
+    const tenDaysAgo = new Date(Date.now() - 10 * DAY);
+    await fs.utimes(nested, tenDaysAgo, tenDaysAgo);
+
+    await pruneStaleFiles(dir, 7 * DAY);
+
+    expect((await fs.stat(nested)).isDirectory()).toBe(true);
+  });
+
+  it("returns 0 for a missing directory", async () => {
+    expect(await pruneStaleFiles(path.join(dir, "missing"), 7 * DAY)).toBe(0);
   });
 });

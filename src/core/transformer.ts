@@ -13,6 +13,7 @@ const MIME_TO_FORMAT: Record<SolidImageMIME, SolidImageFormat> = {
   "image/png": "png",
   "image/webp": "webp",
   "image/tiff": "tiff",
+  "image/gif": "gif",
 };
 
 /** Returns the image format for a MIME type. */
@@ -26,6 +27,7 @@ const FORMAT_TO_MIME: Record<SolidImageFormat, SolidImageMIME> = {
   png: "image/png",
   webp: "image/webp",
   tiff: "image/tiff",
+  gif: "image/gif",
 };
 
 /** Returns the MIME type for an image format. */
@@ -44,6 +46,7 @@ const FILE_TO_FORMAT: Record<SolidImageFile, SolidImageFormat> = {
   webp: "webp",
   tif: "tiff",
   tiff: "tiff",
+  gif: "gif",
 };
 
 /** Returns the image format for a file extension, such as jpg for jpeg. */
@@ -57,6 +60,7 @@ const FORMAT_TO_FILES: Record<SolidImageFormat, SolidImageFile[]> = {
   png: ["png"],
   webp: ["webp"],
   tiff: ["tif", "tiff"],
+  gif: ["gif"],
 };
 
 /** Returns every file extension that maps to the given format. */
@@ -70,6 +74,7 @@ const FORMAT_TO_OUTPUT: Record<SolidImageFormat, SolidImageFile> = {
   png: "png",
   webp: "webp",
   tiff: "tiff",
+  gif: "gif",
 };
 
 /** Returns the file extension to use when writing a file of the given format. */

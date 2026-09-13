@@ -161,12 +161,12 @@ The component works on its own. Pass `src` and an optional `transformer`:
 | `alt` | `string` | yes | Alternative text. |
 | `fallback` | `(visible: () => boolean, onLoad: () => void) => JSX.Element` | no | Placeholder shown while the image loads. |
 | `transformer` | `SolidImageTransformer<T>` | no | Produces the responsive variants for `src`. |
-| `eager` | `boolean` | no | Loads the image right away instead of waiting for it to scroll into view. |
+| `eager` | `boolean` | no | Loads the image right away, preloads it from the head and gives it a high fetch priority. |
 | `sizes` | `string` | no | Value of the `sizes` attribute, such as `50vw`. |
 | `onLoad` | `() => void` | no | Called once the image has loaded and the placeholder is hidden. |
 | `crossOrigin` | `JSX.HTMLCrossorigin` | no | Forwarded to the `<img>`. |
-| `fetchPriority` | `"high" \| "low" \| "auto"` | no | Forwarded to the `<img>`. |
-| `decoding` | `"sync" \| "async" \| "auto"` | no | Forwarded to the `<img>`. |
+| `fetchPriority` | `"high" \| "low" \| "auto"` | no | Forwarded to the `<img>`. Defaults to `high` for an eager image. |
+| `decoding` | `"sync" \| "async" \| "auto"` | no | Forwarded to the `<img>`. Defaults to `async` for a lazy image. |
 
 The `fallback` callback takes two arguments.
 
@@ -192,6 +192,8 @@ Lazy loading costs time for the first image on the page, because nothing starts 
 ```
 
 The server then renders the real image instead of a blank placeholder, so the browser finds it while it parses the page. Leave every other image lazy.
+
+An eager image is also preloaded with a `<link rel="preload">` in the head, so the browser starts fetching it before it reaches the image. The link names the preferred format, and a browser that cannot read that format skips it. Solid adds the link when the server renders a page with a `<head>`.
 
 ### Types
 
@@ -252,11 +254,12 @@ Handles imports ending in `?image`.
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
 | `sizes` | `number[]` | required | Output widths in pixels. Height follows the aspect ratio. |
-| `quality` | `number` | `80` | Quality passed to sharp, from 1 to 100. |
-| `input` | `SolidImageFormat[]` | `["png", "jpeg", "webp"]` | Source formats to process. Other files are left alone. |
+| `quality` | `number \| { [format]: number }` | 50 for AVIF, 80 for the rest | Quality passed to sharp, from 1 to 100. A number applies to every format. PNG and GIF ignore it. |
+| `input` | `SolidImageFormat[]` | `["png", "jpeg", "webp", "gif"]` | Source formats to process. Other files are left alone. |
 | `output` | `SolidImageFormat[]` | `["webp", "jpeg"]` | Formats to emit. They are offered smallest first, whatever the order here. |
 | `publicPath` | `string` | Vite's `publicDir` | Directory the dev server writes processed files to. |
 | `placeholder` | `boolean \| { size?: number } \| { type: "blurhash" }` | `true` | Preview shown while the image loads. See [BlurHash preview](#blurhash-preview). |
+| `concurrency` | `number` | CPU cores | Most images processed at the same time. |
 
 - One file is emitted per output format and per size. `output: ["webp", "jpeg"]` with `sizes: [480, 800]` gives four files per image.
 - Formats are offered in this order: AVIF, WebP, TIFF, JPEG, PNG. The browser takes the first one it reads, and the `<img>` falls back to the last.
@@ -264,7 +267,7 @@ Handles imports ending in `?image`.
 - An opaque image drops PNG when JPEG is also listed, since JPEG is far smaller for photos. List PNG without JPEG to keep it.
 - Sizes wider than the source are dropped and replaced by the source width. An image is never enlarged.
 - Photos are turned upright using their EXIF orientation.
-- Animated images keep every frame in WebP. Other formats keep the first frame.
+- Animated images keep every frame in WebP and GIF. Other formats keep the first frame. Animated GIFs are processed by default, and usually come out much smaller as WebP.
 - JPEG uses mozjpeg and WebP uses its highest effort. PNG is lossless, so `quality` does not apply to it.
 - On build the files go through the bundler as assets, so `base`, `assetsDir` and the build manifest apply to them. Nothing is written to `publicPath`.
 - On the dev server the files are written to `<publicPath>/.image/i-<hash>-<width>.<ext>` and served from `/.image/...`.
@@ -272,6 +275,10 @@ Handles imports ending in `?image`.
 - The `<img>` falls back to the largest size of the last output format. The original file is never imported, so it does not reach the bundle.
 - The hash covers the content of the source file, the format, the width and the quality. It leaves out the path and the modification time, so a fresh checkout in CI still hits the cache.
 - An image is encoded once and reused. The dev server reuses the file in `publicPath`. A build reuses its copy in the Vite cache directory.
+- Previews are cached the same way, so a build or a dev server restart does not compute them again.
+- The cache key also carries a pipeline version. A plugin update that changes how images are encoded writes new files instead of reusing old ones.
+- Cached files unused for a week are removed when the dev server or a build starts.
+- Every variant of an image shares one read of the file and its metadata within a build.
 - Editing an image or changing an option produces a new name, so a stale file is never served.
 
 #### BlurHash preview

@@ -31,6 +31,53 @@ export async function getFileSignature(filePath: string): Promise<string> {
   return crypto.createHash("sha1").update(content).digest("hex");
 }
 
+/** Marks a file as used now, so pruning keeps it. */
+export async function touchFile(filePath: string): Promise<void> {
+  const now = new Date();
+  try {
+    await fs.utimes(filePath, now, now);
+  } catch {
+    // The file is gone, so the next load writes it again.
+  }
+}
+
+/**
+ * Removes the files in a directory that were not used within `maxAge`
+ * milliseconds. Subdirectories are left alone, and a missing directory is not
+ * an error. Returns how many files were removed.
+ */
+export async function pruneStaleFiles(
+  dir: string,
+  maxAge: number,
+  now: number = Date.now(),
+): Promise<number> {
+  let entries;
+  try {
+    entries = await fs.readdir(dir, { withFileTypes: true });
+  } catch {
+    return 0;
+  }
+
+  let removed = 0;
+  await Promise.all(
+    entries
+      .filter(entry => entry.isFile())
+      .map(async entry => {
+        const filePath = path.join(dir, entry.name);
+        try {
+          const stat = await fs.stat(filePath);
+          if (now - stat.mtimeMs > maxAge) {
+            await removeFile(filePath);
+            removed += 1;
+          }
+        } catch {
+          // Another build removed it first.
+        }
+      }),
+  );
+  return removed;
+}
+
 const PATH_FILTER = /[<>:"|?*]/;
 
 export function checkPath(pth: string) {

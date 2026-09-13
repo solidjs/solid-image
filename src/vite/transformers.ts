@@ -11,9 +11,11 @@ export function transformImage(
   size: number,
   quality: number,
 ) {
-  // Only WebP can store every frame of an animated source. Other formats would
-  // get all frames stacked into one tall image, so they keep the first frame.
-  const input = sharp(originalPath, { animated: targetFormat === "webp" })
+  // Only WebP and GIF can store every frame of an animated source. Other formats
+  // would get all frames stacked into one tall image, so they keep the first frame.
+  const input = sharp(originalPath, {
+    animated: targetFormat === "webp" || targetFormat === "gif",
+  })
     // Apply the EXIF orientation, so photos from a phone are not sideways.
     .autoOrient()
     // Never enlarge. An upscaled file is larger and has no more detail.
@@ -35,6 +37,9 @@ export function transformImage(
       return input.webp({ quality, effort: 6 });
     case "tiff":
       return input.tiff({ quality });
+    case "gif":
+      // GIF has no quality setting.
+      return input.gif();
   }
 }
 
@@ -148,7 +153,7 @@ export async function getBlurhashData(
   };
 }
 
-interface ImageData {
+export interface ImageInfo {
   width: number;
   height: number;
   /** Whether any pixel is at least partly see-through. */
@@ -160,7 +165,7 @@ interface ImageData {
  * transparent. A photo with a rotated EXIF orientation reports its width and
  * height swapped. Missing sizes become 0.
  */
-export async function getImageData(originalPath: string): Promise<ImageData> {
+export async function getImageData(originalPath: string): Promise<ImageInfo> {
   const result = await sharp(originalPath).metadata();
   const size = result.autoOrient ?? result;
   return {

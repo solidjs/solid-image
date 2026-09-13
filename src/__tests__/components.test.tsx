@@ -400,6 +400,123 @@ describe("SolidImage SSR", () => {
     expect(outsideNoscript).not.toContain("loading=");
   });
 
+  it("decodes lazy images off the main thread by default", () => {
+    const html = renderToString(() => (
+      <SolidImage
+        src={{ source: "/hero.png", width: 100, height: 100, options: {} }}
+        alt="hero"
+        fallback={() => <div>loading</div>}
+      />
+    ));
+
+    // The lazy placeholder and the noscript copy both decode asynchronously.
+    expect([...html.matchAll(/decoding="async"/g)]).toHaveLength(2);
+    expect(html).not.toContain("fetchpriority=");
+  });
+
+  it("gives an eager image a high fetch priority by default", () => {
+    const html = renderToString(() => (
+      <SolidImage
+        src={{ source: "/hero.png", width: 100, height: 100, options: {} }}
+        alt="hero"
+        eager
+        fallback={() => <div>loading</div>}
+      />
+    ));
+
+    expect(html).toContain('fetchpriority="high"');
+    // An eager image may be the largest paint, so its decoding is left to the browser.
+    expect(html).not.toContain("decoding=");
+  });
+
+  it("keeps decoding and fetch priority that are set", () => {
+    const html = renderToString(() => (
+      <SolidImage
+        src={{ source: "/hero.png", width: 100, height: 100, options: {} }}
+        alt="hero"
+        eager
+        decoding="sync"
+        fetchPriority="low"
+        fallback={() => <div>loading</div>}
+      />
+    ));
+
+    expect(html).toContain('fetchpriority="low"');
+    expect(html).toContain('decoding="sync"');
+    expect(html).not.toContain('fetchpriority="high"');
+  });
+
+  it("preloads an eager image in the head with its preferred format", () => {
+    const html = renderToString(() => (
+      <html>
+        <head />
+        <body>
+          <SolidImage
+            src={{ source: "/hero.png", width: 1600, height: 900, options: {} }}
+            alt="hero"
+            eager
+            sizes="50vw"
+            transformer={{
+              transform: () => [
+                { path: "/hero-400.webp", width: 400, type: "image/webp" },
+                { path: "/hero-400.jpg", width: 400, type: "image/jpeg" },
+              ],
+            }}
+            fallback={() => <div>loading</div>}
+          />
+        </body>
+      </html>
+    ));
+
+    const head = html.slice(0, html.indexOf("</head>"));
+    const link = /<link[^>]*rel="preload"[^>]*>/.exec(head)![0];
+
+    expect(link).toContain('as="image"');
+    expect(link).toContain('imagesrcset="/hero-400.webp 400w"');
+    expect(link).toContain('imagesizes="50vw"');
+    // A browser that cannot read WebP skips the preload instead of fetching it.
+    expect(link).toContain('type="image/webp"');
+    expect(link).toContain('fetchpriority="high"');
+    expect(link).not.toContain("href=");
+  });
+
+  it("preloads the source itself when there is no transformer", () => {
+    const html = renderToString(() => (
+      <html>
+        <head />
+        <body>
+          <SolidImage
+            src={{ source: "/hero.png", width: 100, height: 100, options: {} }}
+            alt="hero"
+            eager
+            fallback={() => <div>loading</div>}
+          />
+        </body>
+      </html>
+    ));
+
+    const head = html.slice(0, html.indexOf("</head>"));
+    expect(head).toContain('href="/hero.png"');
+    expect(head).not.toContain("imagesrcset");
+  });
+
+  it("does not preload a lazy image", () => {
+    const html = renderToString(() => (
+      <html>
+        <head />
+        <body>
+          <SolidImage
+            src={{ source: "/hero.png", width: 100, height: 100, options: {} }}
+            alt="hero"
+            fallback={() => <div>loading</div>}
+          />
+        </body>
+      </html>
+    ));
+
+    expect(html).not.toContain('rel="preload"');
+  });
+
   it("marks the container, aspect ratio box, picture and blocker elements", () => {
     const html = renderToString(() => (
       <SolidImage
