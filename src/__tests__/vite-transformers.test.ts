@@ -65,15 +65,37 @@ afterAll(async () => {
 
 describe("getImageData", () => {
   it("reads the size of an image", async () => {
-    expect(await getImageData(imagePath)).toEqual({ width: 800, height: 400 });
+    expect(await getImageData(imagePath)).toEqual({ width: 800, height: 400, transparent: false });
   });
 
   it("rejects for a missing file", async () => {
     await expect(getImageData(path.join(dir, "missing.png"))).rejects.toThrow();
   });
 
+  it("reports a see-through image as transparent", async () => {
+    const transparentPath = path.join(dir, "transparent.png");
+    await sharp({
+      create: { width: 40, height: 20, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0.5 } },
+    })
+      .png()
+      .toFile(transparentPath);
+
+    expect((await getImageData(transparentPath)).transparent).toBe(true);
+  });
+
+  it("reports an alpha channel with only opaque pixels as not transparent", async () => {
+    const opaquePath = path.join(dir, "opaque-alpha.png");
+    await sharp({
+      create: { width: 40, height: 20, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 1 } },
+    })
+      .png()
+      .toFile(opaquePath);
+
+    expect((await getImageData(opaquePath)).transparent).toBe(false);
+  });
+
   it("reports the displayed size of a rotated photo", async () => {
-    expect(await getImageData(rotatedPath)).toEqual({ width: 32, height: 64 });
+    expect(await getImageData(rotatedPath)).toEqual({ width: 32, height: 64, transparent: false });
   });
 });
 
