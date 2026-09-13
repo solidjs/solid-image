@@ -339,6 +339,8 @@ pnpm test:watch
 pnpm changeset    # add a changeset before opening a pull request
 ```
 
+The [examples](./examples) folder has demo apps for the image and BlurHash previews.
+
 The suite is split into two Vitest projects.
 
 - `node` covers server rendering through `renderToString`. It also calls the Vite plugin hooks directly, with real images processed by sharp.

@@ -52,6 +52,47 @@ importers:
         specifier: ^4.0.10
         version: 4.1.10(@types/node@25.9.5)(@vitest/browser-playwright@4.1.10)(vite@8.1.5(@types/node@25.9.5))
 
+  examples/blurhash:
+    dependencies:
+      '@solidjs/image':
+        specifier: workspace:*
+        version: link:../..
+      blurhash:
+        specifier: ^2.0.5
+        version: 2.0.5
+      solid-js:
+        specifier: ^1.9.9
+        version: 1.9.14
+    devDependencies:
+      typescript:
+        specifier: ^7.0.0
+        version: 7.0.2
+      vite:
+        specifier: ^8.1.5
+        version: 8.1.5(@types/node@25.9.5)
+      vite-plugin-solid:
+        specifier: ^2.11.11
+        version: 2.11.13(solid-js@1.9.14)(vite@8.1.5(@types/node@25.9.5))
+
+  examples/lqip:
+    dependencies:
+      '@solidjs/image':
+        specifier: workspace:*
+        version: link:../..
+      solid-js:
+        specifier: ^1.9.9
+        version: 1.9.14
+    devDependencies:
+      typescript:
+        specifier: ^7.0.0
+        version: 7.0.2
+      vite:
+        specifier: ^8.1.5
+        version: 8.1.5(@types/node@25.9.5)
+      vite-plugin-solid:
+        specifier: ^2.11.11
+        version: 2.11.13(solid-js@1.9.14)(vite@8.1.5(@types/node@25.9.5))
+
 packages:
 
   '@babel/code-frame@7.29.7':
