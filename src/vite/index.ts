@@ -33,7 +33,7 @@ export interface SolidImageOptions {
     output?: SolidImageFormat[];
     /** Quality passed to sharp, from 1 to 100. Defaults to 80. */
     quality?: number;
-    /** Directory the processed files are written to. Defaults to `dist`. */
+    /** Directory the dev server writes processed files to. Defaults to Vite's `publicDir`. */
     publicPath?: string;
     /**
      * Inline preview shown until the image has loaded.
@@ -71,6 +71,26 @@ function isValidFileExtension(extensions: Set<string>, target: string): target i
 }
 
 /**
+ * Returns the widths to emit for a source of the given width.
+ *
+ * Widths above the source are dropped, since they would only upscale it into a
+ * larger and blurrier file. The source width takes their place, so the largest
+ * variant still keeps every pixel of the original.
+ */
+export function getEffectiveSizes(sizes: number[], sourceWidth: number): number[] {
+  // sharp could not read the width, so there is nothing to compare against.
+  if (sourceWidth <= 0) {
+    return [...new Set(sizes)];
+  }
+
+  const result = new Set(sizes.filter(size => size <= sourceWidth));
+  if (sizes.some(size => size > sourceWidth)) {
+    result.add(sourceWidth);
+  }
+  return [...result];
+}
+
+/**
  * Builds the module that carries the image, its intrinsic size and its preview.
  *
  * `source` points at the largest variant of the fallback format rather than the
@@ -80,13 +100,14 @@ async function getImageSource(
   imagePath: string,
   relativePath: string,
   fallback: SolidImageFormat,
-  largestSize: number,
+  sizes: number[],
   placeholderSize: number | false,
 ): Promise<string> {
   const [imageData, placeholder] = await Promise.all([
     getImageData(imagePath),
     placeholderSize === false ? undefined : getPlaceholderData(imagePath, placeholderSize),
   ]);
+  const largestSize = Math.max(...getEffectiveSizes(sizes, imageData.width));
   const variantPath = `${relativePath}?image-raw-${fallback}-${largestSize}`;
 
   return `
@@ -185,7 +206,9 @@ export default {
     const outputFormat = options.local.output ?? DEFAULT_OUTPUT;
     const quality = options.local.quality ?? DEFAULT_QUALITY;
     const sizes = options.local.sizes;
-    const publicPath = options.local.publicPath ?? "dist";
+    const publicPathOption = options.local.publicPath;
+    // Replaced by Vite's public directory once the config is resolved.
+    let publicPath = publicPathOption ?? "public";
     const placeholder = options.local.placeholder ?? true;
     const placeholderSize =
       placeholder === false
@@ -196,7 +219,6 @@ export default {
     // The last output format is the least preferred one, so it is the format
     // every browser is expected to read.
     const fallbackFormat = outputFormat[outputFormat.length - 1]!;
-    const largestSize = Math.max(...sizes);
 
     const validInputFileExtensions = getValidFileExtensions(inputFormat);
 
@@ -211,6 +233,11 @@ export default {
         isBuild = config.command === "build";
         if (config.cacheDir) {
           cacheDir = path.join(config.cacheDir, "solid-image");
+        }
+        // The dev server serves the public directory at the root of the site,
+        // so processed files have to land there to be reachable.
+        if (publicPathOption == null && config.publicDir) {
+          publicPath = config.publicDir;
         }
       },
       resolveId(id, importer) {
@@ -240,23 +267,23 @@ export default {
             originalPath,
             relativePath,
             fallbackFormat,
-            largestSize,
+            sizes,
             placeholderSize,
           );
         }
         // Get the transformer file
         if (condition.startsWith("image-transformer")) {
-          return getImageTransformer(relativePath, outputFormat, sizes);
+          const { width } = await getImageData(originalPath);
+          return getImageTransformer(relativePath, outputFormat, getEffectiveSizes(sizes, width));
         }
         // Image transformer variant
         if (condition.startsWith("image-raw")) {
           const [, , format, size] = condition.split("-");
           // The name covers everything that changes the output, so an edited
-          // image or a changed option never reuses a stale file.
+          // image or a changed option never reuses a stale file. It leaves out
+          // the file path, which differs between checkouts.
           const signature = await getFileSignature(originalPath);
-          const hash = xxHash32(
-            `${originalPath}|${signature}|${format}|${size}|${quality}`,
-          ).toString(16);
+          const hash = xxHash32(`${signature}|${format}|${size}|${quality}`).toString(16);
           const filename = `i-${hash}-${size}.${getOutputFileFromFormat(format as SolidImageFormat)}`;
           const encode = () =>
             transformImage(originalPath, format as SolidImageFormat, +size!, quality).toBuffer();
