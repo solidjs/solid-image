@@ -1,4 +1,6 @@
 packages:
+  # Changesets only finds the package when the root is listed here.
+  - "."
   - examples/*
 
 onlyBuiltDependencies:
