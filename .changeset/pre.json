@@ -4,5 +4,8 @@
   "initialVersions": {
     "@solidjs/image": "0.2.0"
   },
-  "changesets": []
+  "changesets": [
+    "solid-two-line",
+    "swift-owls-cache"
+  ]
 }
