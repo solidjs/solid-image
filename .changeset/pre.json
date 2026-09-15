@@ -2,7 +2,7 @@
   "mode": "pre",
   "tag": "next",
   "initialVersions": {
-    "@solidjs/image": "0.1.0"
+    "@solidjs/image": "0.2.0"
   },
   "changesets": []
 }
