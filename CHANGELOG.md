@@ -1,5 +1,29 @@
 # @solidjs/image
 
+## 0.3.0
+
+### Minor Changes
+
+- 96a42c2: `onError` is called when the image fails to load, and `errorFallback` renders in its place. The loading placeholder used to stay on screen forever.
+
+  A placeholder can now call `onLoad` after the image has loaded. The image used to stay hidden in that case.
+
+  Lazy images start loading once they are within 500px of the viewport. Change the distance with the `rootMargin` prop.
+
+  The image is decoded before it fades in, and the fade is skipped for readers who ask for reduced motion.
+
+  Import `./photo.jpg?image-url` to get the URL of one file. Add `width` and `format` to pick the file, as in `./photo.jpg?width=400&format=webp&image-url`.
+
+- ad3867c: AVIF now encodes at quality 50 by default, and other formats at 80. AVIF reaches similar visual quality at a lower number, and the old shared default of 80 made AVIF files several times larger. `quality` also accepts an object to set formats one by one.
+
+  Cached files now carry a pipeline version, so a plugin update that changes encoding does not reuse old files. Previews are cached on disk like the variants, each image's file and metadata are read once per build, and cached files unused for a week are removed at startup.
+
+  GIF is now a supported input and is processed by default. Animated GIFs keep every frame when the output is WebP or GIF.
+
+  An eager image is now preloaded from the head and gets a high fetch priority. Lazy images decode asynchronously by default. Props that are set still win.
+
+  Image processing is capped at the number of CPU cores at once. Set `concurrency` to change it.
+
 ## 0.2.0
 
 ### Minor Changes
