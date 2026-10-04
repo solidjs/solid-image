@@ -56,7 +56,7 @@ describe("ThumbHash preview in the browser", () => {
           placeholder: {
             hash,
             color: "rgba(51, 102, 153, 0.5)",
-            decode: value => {
+            decode: (value: Uint8Array) => {
               calls.push(value);
               return thumbHashToDataURL(value);
             },

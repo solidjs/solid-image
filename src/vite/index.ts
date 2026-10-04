@@ -202,7 +202,11 @@ export function getVariantFilename(
   return `i-${hash}-${size}.${getOutputFileFromFormat(format)}`;
 }
 
-/** Loads the optional BlurHash package only when its placeholder is enabled. */
+/**
+ * Loads the `blurhash` package.
+ * It is only needed for the BlurHash preview, so it is an optional peer
+ * dependency that the app installs itself.
+ */
 async function loadBlurhash(): Promise<typeof import("blurhash")> {
   try {
     return await import("blurhash");
@@ -304,7 +308,12 @@ function remember<T>(cache: Map<string, Promise<T>>, file: string, read: () => P
   return value;
 }
 
-/** Builds the module that carries the image, its intrinsic size and its preview. */
+/**
+ * Builds the module that carries the image, its intrinsic size and its preview.
+ *
+ * `source` points at the largest variant of the fallback format rather than the
+ * original file, so the untouched original never reaches the bundle.
+ */
 function getImageSource(
   relativePath: string,
   info: ImageInfo,
@@ -314,10 +323,13 @@ function getImageSource(
   placeholderType: ResolvedPlaceholder["type"],
 ): string {
   const largestSize = Math.max(...getEffectiveSizes(sizes, info.width));
+  // The last format is the one every browser reads, so the `img` falls back to it.
   const formats = getEffectiveFormats(outputFormat, info.transparent);
   const fallback = formats[formats.length - 1]!;
   const variantPath = `${relativePath}?image-raw-${fallback}-${largestSize}`;
 
+  // A hash is decoded in the browser. The module brings the decoder along,
+  // so only apps that turned a hash preview on import its package.
   let decoderImport = "";
   let placeholderCode = JSON.stringify(preview);
   if (placeholderType === "blurhash") {
@@ -325,7 +337,8 @@ function getImageSource(
     placeholderCode = `{ ...${placeholderCode}, decode }`;
   } else if (placeholderType === "thumbhash") {
     decoderImport = 'import { thumbHashToDataURL } from "thumbhash";';
-    placeholderCode = `{ ...${placeholderCode}, hash: new Uint8Array(${JSON.stringify((preview as StoredThumbhashPlaceholder | undefined)?.hash ?? [])}), decode: thumbHashToDataURL }`;
+    const hash = JSON.stringify((preview as StoredThumbhashPlaceholder | undefined)?.hash ?? []);
+    placeholderCode = `{ ...${placeholderCode}, hash: new Uint8Array(${hash}), decode: thumbHashToDataURL }`;
   }
 
   return `
@@ -418,6 +431,7 @@ export default { src, transformer };
 `;
 }
 
+// Query flag of an import that asks for the URL of one file.
 const URL_QUERY = "image-url";
 const LOCAL_PATH = /\?image(-[a-z]+(-[0-9]+)?)?|&image-url(&|$)/;
 const REMOTE_PATH = "image:";
@@ -445,15 +459,16 @@ export const imagePlugin = (options: SolidImageOptions) => {
           const param = id.substring(REMOTE_PATH.length);
           const result = await transformUrl(param);
           const remotePlaceholder = result.src.placeholder;
-          const hasHash = remotePlaceholder != null && "hash" in remotePlaceholder;
-          const isBlurhash = hasHash && typeof remotePlaceholder.hash === "string";
-          const isThumbhash = hasHash && remotePlaceholder.hash instanceof Uint8Array;
+          const hash =
+            remotePlaceholder && "hash" in remotePlaceholder ? remotePlaceholder.hash : undefined;
+          const isBlurhash = typeof hash === "string";
+          const isThumbhash = hash instanceof Uint8Array;
           const serializableSource = isThumbhash
             ? {
                 ...result.src,
                 placeholder: {
                   ...remotePlaceholder,
-                  hash: Array.from(remotePlaceholder.hash),
+                  hash: Array.from(hash),
                 },
               }
             : result.src;
@@ -490,6 +505,7 @@ export default {
     const getQuality = resolveQuality(options.local.quality);
     const sizes = options.local.sizes;
     const publicPathOption = options.local.publicPath;
+    // Replaced by Vite's public directory once the config is resolved.
     let publicPath = publicPathOption ?? "public";
     const placeholder = resolvePlaceholder(options.local.placeholder);
     const limit = createLimit(
@@ -499,13 +515,19 @@ export default {
     const validInputFileExtensions = getValidFileExtensions(inputFormat);
 
     let isBuild = false;
+    // Replaced by the Vite cache directory once the config is resolved.
     let cacheDir = path.join("node_modules", ".vite", "solid-image");
 
+    // Every variant of an image needs its content hash, and several modules need
+    // its metadata. Each is read once per file and shared. A file that changes
+    // is forgotten, so the dev server reads it again.
     const signatures = new Map<string, Promise<string>>();
     const infos = new Map<string, Promise<ImageInfo>>();
     const readSignature = (file: string) => remember(signatures, file, () => getFileSignature(file));
     const readInfo = (file: string) => remember(infos, file, () => limit(() => getImageData(file)));
 
+    // Previews are cached on disk like the variants, keyed by content, so a
+    // build or a dev server restart does not compute them again.
     async function readPreview(file: string): Promise<Preview | undefined> {
       if (placeholder.type === "none") {
         return undefined;
@@ -540,6 +562,7 @@ export default {
         } else if (placeholder.type === "thumbhash") {
           await loadThumbhash();
         }
+        // Old files are removed at startup, before anything reads them.
         await Promise.all([
           pruneStaleFiles(cacheDir, STALE_AFTER_MS),
           pruneStaleFiles(path.join(cacheDir, "previews"), STALE_AFTER_MS),
@@ -551,6 +574,8 @@ export default {
         if (config.cacheDir) {
           cacheDir = path.join(config.cacheDir, "solid-image");
         }
+        // The dev server serves the public directory at the root of the site,
+        // so processed files have to land there to be reachable.
         if (publicPathOption == null && config.publicDir) {
           publicPath = config.publicDir;
         }
@@ -572,6 +597,7 @@ export default {
         }
         const { dir, name, ext } = path.parse(id);
         const [actualExtension, condition] = ext.substring(1).split("?");
+        // Check if extension is valid
         if (!isValidFileExtension(validInputFileExtensions, actualExtension!)) {
           return null;
         }
@@ -580,10 +606,12 @@ export default {
         }
         const originalPath = `${dir}/${name}.${actualExtension}`;
         const relativePath = `./${name}.${actualExtension}`;
+        // The URL of one file, for places that take a single file.
         const query = new URLSearchParams(condition);
         if (query.has(URL_QUERY)) {
           return getImageURL(relativePath, await readInfo(originalPath), query, outputFormat, sizes);
         }
+        // Get the true source
         if (condition.startsWith("image-source")) {
           const [info, preview] = await Promise.all([
             readInfo(originalPath),
@@ -591,6 +619,7 @@ export default {
           ]);
           return getImageSource(relativePath, info, preview, outputFormat, sizes, placeholder.type);
         }
+        // Get the transformer file
         if (condition.startsWith("image-transformer")) {
           const { width, transparent } = await readInfo(originalPath);
           return getImageTransformer(
@@ -599,6 +628,7 @@ export default {
             getEffectiveSizes(sizes, width),
           );
         }
+        // Image transformer variant
         if (condition.startsWith("image-raw")) {
           const [, , rawFormat, rawSize] = condition.split("-");
           const format = rawFormat as SolidImageFormat;
@@ -608,7 +638,12 @@ export default {
           const filename = getVariantFilename(signature, format, size, quality);
           const encode = () => limit(() => transformImage(originalPath, format, size, quality).toBuffer());
 
+          // On build the file goes through the bundler, so it picks up `base`,
+          // `assetsDir` and the manifest like any other asset.
           if (isBuild) {
+            // Nothing is written to the public directory on build, so keep the
+            // encoded file in the Vite cache directory. The next build reads it
+            // back instead of encoding again.
             const cachePath = path.join(cacheDir, filename);
             let buffer: Buffer;
             if (await fileExists(cachePath)) {
@@ -628,6 +663,7 @@ export default {
 
           const basePath = path.join(".image", filename);
           const targetPath = path.join(publicPath, basePath);
+          // Encoding is the slow part, so skip it when the file is already there.
           if (await fileExists(targetPath)) {
             await touchFile(targetPath);
           } else {
@@ -635,6 +671,7 @@ export default {
           }
           return `export default "/${basePath}"`;
         }
+        // Image transformer variant
         if (condition.startsWith("image-")) {
           const [, format, size] = condition.split("-");
           return getImageVariant(relativePath, format as SolidImageFormat, +size!);
