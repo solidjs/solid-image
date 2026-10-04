@@ -22,6 +22,13 @@
   transition: opacity 200ms ease-in-out;
 }
 
+/* Readers who ask for less motion get the image without the fade. */
+@media (prefers-reduced-motion: reduce) {
+  [data-solid-image="image"] {
+    transition: none;
+  }
+}
+
 [data-solid-image="container"] {
   width: 100%;
   height: 100%;

@@ -252,6 +252,49 @@ describe("local images", () => {
     expect(code).not.toContain('import source from "./photo.png"');
   });
 
+  it("resolves an image-url id with query parameters next to the importer", () => {
+    const plugin = createLocalPlugin();
+    const id = "./photo.png?width=400&format=webp&image-url";
+
+    expect(callResolveId(plugin, id, path.join(dir, "app.tsx"))).toBe(path.join(dir, id));
+  });
+
+  it("points an image-url import at the largest variant of the fallback format", async () => {
+    const plugin = createLocalPlugin({ output: ["webp", "jpeg"], sizes: [400, 800] });
+    const code: string = await callLoad(plugin, path.join(dir, "photo.png?image-url"));
+
+    expect(code).toBe('export { default } from "./photo.png?image-raw-jpeg-800";');
+  });
+
+  it("picks the width and format of an image-url import from the query", async () => {
+    const plugin = createLocalPlugin();
+    const code: string = await callLoad(
+      plugin,
+      path.join(dir, "photo.png?width=400&format=avif&image-url"),
+    );
+
+    expect(code).toBe('export { default } from "./photo.png?image-raw-avif-400";');
+  });
+
+  it("never gives an image-url import a file wider than the source", async () => {
+    const plugin = createLocalPlugin();
+    // The source is 1200 pixels wide.
+    const code: string = await callLoad(plugin, path.join(dir, "photo.png?width=5000&image-url"));
+
+    expect(code).toBe('export { default } from "./photo.png?image-raw-jpeg-1200";');
+  });
+
+  it("rejects an image-url import with an unknown format or a bad width", async () => {
+    const plugin = createLocalPlugin();
+
+    await expect(callLoad(plugin, path.join(dir, "photo.png?format=bmp&image-url"))).rejects.toThrow(
+      'Unknown image format "bmp"',
+    );
+    await expect(callLoad(plugin, path.join(dir, "photo.png?width=abc&image-url"))).rejects.toThrow(
+      'Invalid image width "abc"',
+    );
+  });
+
   it("inlines a placeholder preview and the dominant color", async () => {
     const plugin = createLocalPlugin();
     const code: string = await callLoad(plugin, path.join(dir, "photo.png?image-source"));

@@ -355,6 +355,113 @@ describe("SolidImage in the browser", () => {
     expect(findImage(host)!.srcset).toBe(`${PIXEL} 400w,${PIXEL} 800w`);
   });
 
+  it("reveals the image when the placeholder is ready after the image loads", async () => {
+    const onLoad = vi.fn();
+    let ready: (() => void) | undefined;
+
+    const { host, scrollIntoView } = mount(() => (
+      <SolidImage
+        src={{ source: PIXEL, width: 100, height: 100, options: {} }}
+        alt="pixel"
+        onLoad={onLoad}
+        fallback={(_visible, show) => {
+          ready = show;
+          return <div data-test="placeholder">Loading...</div>;
+        }}
+      />
+    ));
+
+    scrollIntoView();
+
+    await expect.poll(() => findImage(host)).not.toBe(null);
+    // Give the image time to load while the placeholder is not ready.
+    await new Promise(resolve => setTimeout(resolve, 100));
+    expect(findImage(host)!.style.opacity).toBe("0");
+
+    ready!();
+
+    await expect.poll(() => findImage(host)?.style.opacity).toBe("1");
+    expect(onLoad).toHaveBeenCalledTimes(1);
+  });
+
+  it("waits for the image to decode before revealing it", async () => {
+    let finishDecode: (() => void) | undefined;
+    const decode = vi
+      .spyOn(HTMLImageElement.prototype, "decode")
+      .mockImplementation(() => new Promise<void>(resolve => (finishDecode = resolve)));
+
+    try {
+      const { host, scrollIntoView } = mount(() => (
+        <SolidImage src={{ source: PIXEL, width: 100, height: 100, options: {} }} alt="pixel" />
+      ));
+
+      scrollIntoView();
+
+      await expect.poll(() => decode.mock.calls.length).toBe(1);
+      await new Promise(resolve => setTimeout(resolve, 50));
+      expect(findImage(host)!.style.opacity).toBe("0");
+
+      finishDecode!();
+
+      await expect.poll(() => findImage(host)?.style.opacity).toBe("1");
+    } finally {
+      decode.mockRestore();
+    }
+  });
+
+  it("calls onError and shows the error fallback when the image fails", async () => {
+    const onError = vi.fn();
+    const onLoad = vi.fn();
+
+    const { host, scrollIntoView } = mount(() => (
+      <SolidImage
+        src={{
+          // Not a valid PNG, so the browser fails to load it.
+          source: "data:image/png;base64,AAAA",
+          width: 100,
+          height: 100,
+          options: {},
+          placeholder: { url: PIXEL, color: "#336699" },
+        }}
+        alt="broken"
+        onError={onError}
+        onLoad={onLoad}
+        errorFallback={() => <div data-test="error">Could not load</div>}
+        fallback={(visible, show) => (
+          <Show when={visible()}>
+            <Placeholder show={show} />
+          </Show>
+        )}
+      />
+    ));
+
+    scrollIntoView();
+
+    await expect.poll(() => host.querySelector('[data-test="error"]')).not.toBe(null);
+
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onLoad).not.toHaveBeenCalled();
+    expect(host.querySelector('[data-test="placeholder"]')).toBe(null);
+    // The broken image stays hidden, and the preview stays behind the error.
+    expect(findImage(host)!.style.opacity).toBe("0");
+    const box = host.querySelector<HTMLElement>('[data-solid-image="aspect-ratio"]')!;
+    expect(box.style.backgroundImage).toContain(PIXEL);
+  });
+
+  it("starts loading before the image scrolls into view", async () => {
+    const { host } = mount(() => (
+      <SolidImage
+        src={{ source: PIXEL, width: 100, height: 100, options: {} }}
+        alt="pixel"
+        // The image sits one viewport below the fold.
+        rootMargin="200%"
+      />
+    ));
+
+    // Never scrolled, so only the margin can render this.
+    await expect.poll(() => findImage(host)?.getAttribute("src")).toBe(PIXEL);
+  });
+
   it("reserves the aspect ratio before the image loads", () => {
     const { host } = mount(() => (
       <SolidImage
