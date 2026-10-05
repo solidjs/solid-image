@@ -1,0 +1,22 @@
+{
+  "name": "@solidjs/image-example-thumbhash",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@solidjs/image": "workspace:*",
+    "@solidjs/web": "2.0.0-rc.8",
+    "solid-js": "2.0.0-rc.8",
+    "thumbhash": "^0.1.1"
+  },
+  "devDependencies": {
+    "@solidjs/vite-plugin": "3.0.0-next.43",
+    "typescript": "^7.0.0",
+    "vite": "^8.1.5"
+  }
+}

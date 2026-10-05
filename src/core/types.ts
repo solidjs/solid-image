@@ -63,6 +63,24 @@ export interface SolidImageBlurhashPlaceholder {
 }
 
 /**
+ * A ThumbHash preview of an image.
+ * The binary hash is decoded into a data URL in the browser.
+ */
+export interface SolidImageThumbhashPlaceholder {
+  /** The encoded ThumbHash bytes. */
+  hash: Uint8Array;
+  /** Average color of the image as a CSS color. Alpha is preserved. */
+  color: string;
+  /** Decodes the hash into a data URL. This is `thumbHashToDataURL` from the `thumbhash` package. */
+  decode: (hash: Uint8Array) => string;
+}
+
+export type SolidImagePreview =
+  | SolidImagePlaceholder
+  | SolidImageBlurhashPlaceholder
+  | SolidImageThumbhashPlaceholder;
+
+/**
  * An image source
  */
 export interface SolidImageSource<T> {
@@ -71,7 +89,7 @@ export interface SolidImageSource<T> {
   height: number;
   options: T;
   /** Inline preview shown until the image has loaded. */
-  placeholder?: SolidImagePlaceholder | SolidImageBlurhashPlaceholder;
+  placeholder?: SolidImagePreview;
 }
 
 /**

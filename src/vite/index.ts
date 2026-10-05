@@ -8,6 +8,7 @@ import type {
   SolidImageFile,
   SolidImageFormat,
   SolidImagePlaceholder,
+  SolidImageThumbhashPlaceholder,
   SolidImageVariant,
 } from "../core/types.ts";
 import { fileExists, getFileSignature, outputFile, pruneStaleFiles, touchFile } from "./fs.ts";
@@ -16,6 +17,7 @@ import {
   getBlurhashData,
   getImageData,
   getPlaceholderData,
+  getThumbhashData,
   type ImageInfo,
   transformImage,
 } from "./transformers.ts";
@@ -54,7 +56,20 @@ const STALE_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
 
 type MaybePromise<T> = T | Promise<T>;
 
-type Preview = SolidImagePlaceholder | Omit<SolidImageBlurhashPlaceholder, "decode">;
+type StoredThumbhashPlaceholder = {
+  hash: number[];
+  color: string;
+};
+
+type Preview =
+  | SolidImagePlaceholder
+  | Omit<SolidImageBlurhashPlaceholder, "decode">
+  | StoredThumbhashPlaceholder;
+
+type RemotePreview =
+  | SolidImagePlaceholder
+  | Omit<SolidImageBlurhashPlaceholder, "decode">
+  | Omit<SolidImageThumbhashPlaceholder, "decode">;
 
 /**
  * Turns on a BlurHash preview instead of the inline image preview.
@@ -62,6 +77,11 @@ type Preview = SolidImagePlaceholder | Omit<SolidImageBlurhashPlaceholder, "deco
  */
 export interface BlurhashPlaceholderOptions {
   type: "blurhash";
+}
+
+/** Turns on a ThumbHash preview instead of the inline image preview. */
+export interface ThumbhashPlaceholderOptions {
+  type: "thumbhash";
 }
 
 export interface SolidImageOptions {
@@ -92,10 +112,14 @@ export interface SolidImageOptions {
      *
      * - Set to `false` to skip it.
      * - Give `{ size }` to change the width of the inline image.
-     * - Give `{ type: "blurhash" }` to use a BlurHash instead. It needs the
-     *   `blurhash` package installed.
+     * - Give `{ type: "blurhash" }` to use BlurHash. It needs `blurhash` installed.
+     * - Give `{ type: "thumbhash" }` to use ThumbHash. It needs `thumbhash` installed.
      */
-    placeholder?: boolean | { type?: "image"; size?: number } | BlurhashPlaceholderOptions;
+    placeholder?:
+      | boolean
+      | { type?: "image"; size?: number }
+      | BlurhashPlaceholderOptions
+      | ThumbhashPlaceholderOptions;
     /** Most images processed at the same time. Defaults to the number of CPU cores. */
     concurrency?: number;
   };
@@ -107,7 +131,7 @@ export interface SolidImageOptions {
         source: string;
         width: number;
         height: number;
-        placeholder?: Preview;
+        placeholder?: RemotePreview;
       };
       variants: SolidImageVariant | SolidImageVariant[];
     }>;
@@ -133,7 +157,8 @@ function isValidFileExtension(extensions: Set<string>, target: string): target i
 type ResolvedPlaceholder =
   | { type: "none" }
   | { type: "image"; size: number }
-  | { type: "blurhash" };
+  | { type: "blurhash" }
+  | { type: "thumbhash" };
 
 function resolvePlaceholder(option: LocalOptions["placeholder"]): ResolvedPlaceholder {
   if (option === false) {
@@ -142,8 +167,8 @@ function resolvePlaceholder(option: LocalOptions["placeholder"]): ResolvedPlaceh
   if (option === undefined || option === true) {
     return { type: "image", size: DEFAULT_PLACEHOLDER_SIZE };
   }
-  if (option.type === "blurhash") {
-    return { type: "blurhash" };
+  if (option.type === "blurhash" || option.type === "thumbhash") {
+    return { type: option.type };
   }
   return { type: "image", size: option.size ?? DEFAULT_PLACEHOLDER_SIZE };
 }
@@ -193,6 +218,18 @@ async function loadBlurhash(): Promise<typeof import("blurhash")> {
   }
 }
 
+/** Loads the optional ThumbHash package only when its placeholder is enabled. */
+async function loadThumbhash(): Promise<typeof import("thumbhash")> {
+  try {
+    return await import("thumbhash");
+  } catch (error) {
+    throw new Error(
+      'The ThumbHash placeholder needs the "thumbhash" package. Install it with `npm i thumbhash`.',
+      { cause: error },
+    );
+  }
+}
+
 async function computePlaceholder(
   imagePath: string,
   placeholder: Exclude<ResolvedPlaceholder, { type: "none" }>,
@@ -200,8 +237,12 @@ async function computePlaceholder(
   if (placeholder.type === "image") {
     return await getPlaceholderData(imagePath, placeholder.size);
   }
-  const { encode } = await loadBlurhash();
-  return await getBlurhashData(imagePath, encode);
+  if (placeholder.type === "blurhash") {
+    const { encode } = await loadBlurhash();
+    return await getBlurhashData(imagePath, encode);
+  }
+  const { rgbaToThumbHash, thumbHashToAverageRGBA } = await loadThumbhash();
+  return await getThumbhashData(imagePath, rgbaToThumbHash, thumbHashToAverageRGBA);
 }
 
 /**
@@ -279,7 +320,7 @@ function getImageSource(
   preview: Preview | undefined,
   outputFormat: SolidImageFormat[],
   sizes: number[],
-  isBlurhash: boolean,
+  placeholderType: ResolvedPlaceholder["type"],
 ): string {
   const largestSize = Math.max(...getEffectiveSizes(sizes, info.width));
   // The last format is the one every browser reads, so the `img` falls back to it.
@@ -287,15 +328,26 @@ function getImageSource(
   const fallback = formats[formats.length - 1]!;
   const variantPath = `${relativePath}?image-raw-${fallback}-${largestSize}`;
 
-  // A BlurHash is decoded in the browser. The module brings the decoder along,
-  // so only apps that turned the BlurHash preview on import the package.
+  // A hash is decoded in the browser. The module brings the decoder along,
+  // so only apps that turned a hash preview on import its package.
+  let decoderImport = "";
+  let placeholderCode = JSON.stringify(preview);
+  if (placeholderType === "blurhash") {
+    decoderImport = 'import { decode } from "blurhash";';
+    placeholderCode = `{ ...${placeholderCode}, decode }`;
+  } else if (placeholderType === "thumbhash") {
+    decoderImport = 'import { thumbHashToDataURL } from "thumbhash";';
+    const hash = JSON.stringify((preview as StoredThumbhashPlaceholder | undefined)?.hash ?? []);
+    placeholderCode = `{ ...${placeholderCode}, hash: new Uint8Array(${hash}), decode: thumbHashToDataURL }`;
+  }
+
   return `
 import source from ${JSON.stringify(variantPath)};
-${isBlurhash ? 'import { decode } from "blurhash";' : ""}
+${decoderImport}
 export default {
   width: ${JSON.stringify(info.width)},
   height: ${JSON.stringify(info.height)},
-  placeholder: ${isBlurhash ? `{ ...${JSON.stringify(preview)}, decode }` : JSON.stringify(preview)},
+  placeholder: ${placeholderCode},
   source,
 };
 `;
@@ -405,16 +457,37 @@ export const imagePlugin = (options: SolidImageOptions) => {
       async load(id) {
         if (id.startsWith(REMOTE_PATH)) {
           const param = id.substring(REMOTE_PATH.length);
-
           const result = await transformUrl(param);
-
           const remotePlaceholder = result.src.placeholder;
-          const isBlurhash = remotePlaceholder != null && "hash" in remotePlaceholder;
+          const hash =
+            remotePlaceholder && "hash" in remotePlaceholder ? remotePlaceholder.hash : undefined;
+          const isBlurhash = typeof hash === "string";
+          const isThumbhash = hash instanceof Uint8Array;
+          const serializableSource = isThumbhash
+            ? {
+                ...result.src,
+                placeholder: {
+                  ...remotePlaceholder,
+                  hash: Array.from(hash),
+                },
+              }
+            : result.src;
 
-          return `${isBlurhash ? 'import { decode } from "blurhash";\n' : ""}const SRC = ${JSON.stringify(result.src)};
+          const decoderImport = isBlurhash
+            ? 'import { decode } from "blurhash";\n'
+            : isThumbhash
+              ? 'import { thumbHashToDataURL } from "thumbhash";\n'
+              : "";
+          const sourceCode = isBlurhash
+            ? "{ ...SRC, placeholder: { ...SRC.placeholder, decode } }"
+            : isThumbhash
+              ? "{ ...SRC, placeholder: { ...SRC.placeholder, hash: new Uint8Array(SRC.placeholder.hash), decode: thumbHashToDataURL } }"
+              : "SRC";
+
+          return `${decoderImport}const SRC = ${JSON.stringify(serializableSource)};
 const VARIANTS = ${JSON.stringify(result.variants)};
 export default {
-  src: ${isBlurhash ? "{ ...SRC, placeholder: { ...SRC.placeholder, decode } }" : "SRC"},
+  src: ${sourceCode},
   transformer: {
     transform() {
       return VARIANTS;
@@ -450,8 +523,7 @@ export default {
     // is forgotten, so the dev server reads it again.
     const signatures = new Map<string, Promise<string>>();
     const infos = new Map<string, Promise<ImageInfo>>();
-    const readSignature = (file: string) =>
-      remember(signatures, file, () => getFileSignature(file));
+    const readSignature = (file: string) => remember(signatures, file, () => getFileSignature(file));
     const readInfo = (file: string) => remember(infos, file, () => limit(() => getImageData(file)));
 
     // Previews are cached on disk like the variants, keyed by content, so a
@@ -462,7 +534,7 @@ export default {
       }
 
       const signature = await readSignature(file);
-      const kind = placeholder.type === "image" ? `image-${placeholder.size}` : "blurhash";
+      const kind = placeholder.type === "image" ? `image-${placeholder.size}` : placeholder.type;
       const hash = xxHash32(`v${PIPELINE_VERSION}|${signature}|${kind}`).toString(16);
       const cachePath = path.join(cacheDir, "previews", `p-${hash}.json`);
 
@@ -487,6 +559,8 @@ export default {
       async buildStart() {
         if (placeholder.type === "blurhash") {
           await loadBlurhash();
+        } else if (placeholder.type === "thumbhash") {
+          await loadThumbhash();
         }
         // Old files are removed at startup, before anything reads them.
         await Promise.all([
@@ -543,14 +617,7 @@ export default {
             readInfo(originalPath),
             readPreview(originalPath),
           ]);
-          return getImageSource(
-            relativePath,
-            info,
-            preview,
-            outputFormat,
-            sizes,
-            placeholder.type === "blurhash",
-          );
+          return getImageSource(relativePath, info, preview, outputFormat, sizes, placeholder.type);
         }
         // Get the transformer file
         if (condition.startsWith("image-transformer")) {
@@ -569,8 +636,7 @@ export default {
           const quality = getQuality(format);
           const signature = await readSignature(originalPath);
           const filename = getVariantFilename(signature, format, size, quality);
-          const encode = () =>
-            limit(() => transformImage(originalPath, format, size, quality).toBuffer());
+          const encode = () => limit(() => transformImage(originalPath, format, size, quality).toBuffer());
 
           // On build the file goes through the bundler, so it picks up `base`,
           // `assetsDir` and the manifest like any other asset.
@@ -608,7 +674,6 @@ export default {
         // Image transformer variant
         if (condition.startsWith("image-")) {
           const [, format, size] = condition.split("-");
-
           return getImageVariant(relativePath, format as SolidImageFormat, +size!);
         }
         if (condition.startsWith("image")) {

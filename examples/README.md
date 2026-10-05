@@ -4,6 +4,7 @@ Each folder is a small Vite app that uses `@solidjs/image` from this repository.
 
 - [`lqip`](./lqip) shows a 20px copy of each image while it loads.
 - [`blurhash`](./blurhash) shows a BlurHash of each image while it loads.
+- [`thumbhash`](./thumbhash) shows a ThumbHash of each image while it loads.
 
 ## Run an example
 
@@ -19,6 +20,7 @@ Each folder is a small Vite app that uses `@solidjs/image` from this repository.
    ```bash
    pnpm --filter @solidjs/image-example-lqip dev
    pnpm --filter @solidjs/image-example-blurhash dev
+   pnpm --filter @solidjs/image-example-thumbhash dev
    ```
 
 The examples use the built package. Run `pnpm build` again after you change `src`.
