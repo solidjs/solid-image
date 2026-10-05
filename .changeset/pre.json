@@ -4,5 +4,8 @@
   "initialVersions": {
     "@solidjs/image": "0.3.0"
   },
-  "changesets": []
+  "changesets": [
+    "solid-two-line",
+    "tidy-hashes-glow"
+  ]
 }
