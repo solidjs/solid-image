@@ -36,6 +36,9 @@ importers:
       solid-js:
         specifier: ^1.9.9
         version: 1.9.14
+      thumbhash:
+        specifier: 0.1.1
+        version: 0.1.1
       tsdown:
         specifier: ^0.22.12
         version: 0.22.13(@tsdown/css@0.22.13)(typescript@7.0.2)
@@ -82,6 +85,28 @@ importers:
       solid-js:
         specifier: ^1.9.9
         version: 1.9.14
+    devDependencies:
+      typescript:
+        specifier: ^7.0.0
+        version: 7.0.2
+      vite:
+        specifier: ^8.1.5
+        version: 8.1.5(@types/node@25.9.5)
+      vite-plugin-solid:
+        specifier: ^2.11.11
+        version: 2.11.13(solid-js@1.9.14)(vite@8.1.5(@types/node@25.9.5))
+
+  examples/thumbhash:
+    dependencies:
+      '@solidjs/image':
+        specifier: workspace:*
+        version: link:../..
+      solid-js:
+        specifier: ^1.9.9
+        version: 1.9.14
+      thumbhash:
+        specifier: ^0.1.1
+        version: 0.1.1
     devDependencies:
       typescript:
         specifier: ^7.0.0
@@ -1665,6 +1690,9 @@ packages:
   term-size@2.2.1:
     resolution: {integrity: sha512-wK0Ri4fOGjv/XPy8SBHZChl8CM7uMc5VML7SqiQ0zG7+J5Vr+RMQDoHa2CNT6KHUnTGIXH34UDMkPzAUyapBZg==}
     engines: {node: '>=8'}
+
+  thumbhash@0.1.1:
+    resolution: {integrity: sha512-kH5pKeIIBPQXAOni2AiY/Cu/NKdkFREdpH+TLdM0g6WA7RriCv0kPLgP731ady67MhTAqrVG/4mnEeibVuCJcg==}
 
   tinybench@2.9.0:
     resolution: {integrity: sha512-0+DUvqWMValLmha6lr4kD8iAMK1HzV0/aKnCtWb9v9641TnP/MFb7Pc2bxoxQjTXAErryXVgUOfv2YqNllqGeg==}
@@ -3269,6 +3297,8 @@ snapshots:
   strip-bom@3.0.0: {}
 
   term-size@2.2.1: {}
+
+  thumbhash@0.1.1: {}
 
   tinybench@2.9.0: {}
 

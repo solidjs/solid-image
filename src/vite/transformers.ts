@@ -153,6 +153,59 @@ export async function getBlurhashData(
   };
 }
 
+export interface ThumbhashData {
+  /** JSON-friendly representation of the binary hash. */
+  hash: number[];
+  /** Average color from the hash. Alpha is preserved. */
+  color: string;
+}
+
+export type ThumbhashEncode = (width: number, height: number, pixels: Uint8Array) => Uint8Array;
+export type ThumbhashAverageRGBA = (hash: Uint8Array) => {
+  r: number;
+  g: number;
+  b: number;
+  a: number;
+};
+
+// ThumbHash accepts images up to 100x100. The reference browser example scales
+// the longest side to 100px before encoding, which preserves all useful detail.
+const THUMBHASH_SAMPLE_SIZE = 100;
+
+function toRGBAColor(r: number, g: number, b: number, a: number): string {
+  const alpha = Math.round(a * 1000) / 1000;
+  return `rgba(${Math.round(r * 255)}, ${Math.round(g * 255)}, ${Math.round(b * 255)}, ${alpha})`;
+}
+
+/**
+ * Encodes an image as a ThumbHash and derives the server-side fallback color
+ * from that hash. The sample is auto-oriented and never exceeds 100x100.
+ */
+export async function getThumbhashData(
+  originalPath: string,
+  encode: ThumbhashEncode,
+  average: ThumbhashAverageRGBA,
+): Promise<ThumbhashData> {
+  const { data, info } = await sharp(originalPath)
+    .autoOrient()
+    .resize(THUMBHASH_SAMPLE_SIZE, THUMBHASH_SAMPLE_SIZE, {
+      fit: "inside",
+      withoutEnlargement: true,
+    })
+    .ensureAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+
+  const pixels = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+  const hash = encode(info.width, info.height, pixels);
+  const { r, g, b, a } = average(hash);
+
+  return {
+    hash: Array.from(hash),
+    color: toRGBAColor(r, g, b, a),
+  };
+}
+
 export interface ImageInfo {
   width: number;
   height: number;

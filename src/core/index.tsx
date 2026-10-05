@@ -14,7 +14,9 @@ import {
   getBlurhashURL,
   getEmptyImageURL,
   getPlaceholderStyle,
+  getThumbhashURL,
   isBlurhashPlaceholder,
+  isThumbhashPlaceholder,
 } from "./utils.ts";
 
 import "./styles.css";
@@ -216,19 +218,29 @@ export function SolidImage<T>(props: SolidImageProps<T>): JSX.Element {
         }),
   );
 
-  // Decoding a BlurHash needs a canvas. Effects only run in the browser, so the
-  // server paints the average color and the blur follows once decoded.
-  const [blurhashURL, setBlurhashURL] = createSignal<string>();
+  // Hash previews need browser-only decoding. Effects never run on the server,
+  // so SSR paints the average color and the decoded preview follows on hydrate.
+  const [hashURL, setHashURL] = createSignal<string>();
   createEffect(() => {
     const placeholder = props.src.placeholder;
-    if (!placeholder || !isBlurhashPlaceholder(placeholder)) {
-      setBlurhashURL(undefined);
+    if (!placeholder) {
+      setHashURL(undefined);
       return;
     }
 
-    const ratio = width() > 0 ? height() / width() : 1;
-    const decodedHeight = Math.max(1, Math.round(BLURHASH_WIDTH * ratio));
-    setBlurhashURL(getBlurhashURL(placeholder, BLURHASH_WIDTH, decodedHeight));
+    if (isBlurhashPlaceholder(placeholder)) {
+      const ratio = width() > 0 ? height() / width() : 1;
+      const decodedHeight = Math.max(1, Math.round(BLURHASH_WIDTH * ratio));
+      setHashURL(getBlurhashURL(placeholder, BLURHASH_WIDTH, decodedHeight));
+      return;
+    }
+
+    if (isThumbhashPlaceholder(placeholder)) {
+      setHashURL(getThumbhashURL(placeholder));
+      return;
+    }
+
+    setHashURL(undefined);
   });
 
   const boxStyle = createMemo(() => {
@@ -244,7 +256,10 @@ export function SolidImage<T>(props: SolidImageProps<T>): JSX.Element {
       return style;
     }
 
-    const url = isBlurhashPlaceholder(placeholder) ? blurhashURL() : placeholder.url;
+    const url =
+      isBlurhashPlaceholder(placeholder) || isThumbhashPlaceholder(placeholder)
+        ? hashURL()
+        : placeholder.url;
     return { ...style, ...getPlaceholderStyle({ color: placeholder.color, url }) };
   });
 

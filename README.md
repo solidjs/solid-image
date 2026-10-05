@@ -21,6 +21,7 @@ Requirements:
 - `solid-js` 1.9.9 or newer, and Vite 8 or newer. Both are peer dependencies.
 - Node 24 or newer for the Vite plugin. It uses [`sharp`](https://sharp.pixelplumbing.com) to process images.
 - [`blurhash`](https://github.com/woltapp/blurhash) 2 or newer, only for the BlurHash preview. It is an optional peer dependency.
+- [`thumbhash`](https://github.com/evanw/thumbhash) 0.1.1 or newer, only for the ThumbHash preview. It is an optional peer dependency.
 
 ## Setup
 
@@ -228,6 +229,7 @@ interface SolidImageSource<T> {
   width: number;
   height: number;
   options: T;
+  placeholder?: SolidImagePreview;
 }
 
 interface SolidImagePlaceholder {
@@ -241,6 +243,12 @@ interface SolidImageBlurhashPlaceholder {
   decode: (hash: string, width: number, height: number) => Uint8ClampedArray;
 }
 
+interface SolidImageThumbhashPlaceholder {
+  hash: Uint8Array;
+  color: string;
+  decode: (hash: Uint8Array) => string;
+}
+
 interface SolidImageVariant {
   path: string;
   width: number;
@@ -252,8 +260,8 @@ interface SolidImageTransformer<T> {
 }
 ```
 
-- `SolidImageMIME` is `"image/avif" | "image/jpeg" | "image/png" | "image/webp" | "image/tiff"`.
-- `SolidImageFormat` is `"avif" | "jpeg" | "png" | "webp" | "tiff"`.
+- `SolidImageMIME` is `"image/avif" | "image/jpeg" | "image/png" | "image/webp" | "image/tiff" | "image/gif"`.
+- `SolidImageFormat` is `"avif" | "jpeg" | "png" | "webp" | "tiff" | "gif"`.
 - `SolidImageFile` is every file extension that maps to a format, such as `"jpg"`, `"jfif"` and `"tif"`.
 
 Notes on the shape:
@@ -283,7 +291,7 @@ Handles imports ending in `?image`, and single file imports ending in `image-url
 | `input` | `SolidImageFormat[]` | `["png", "jpeg", "webp", "gif"]` | Source formats to process. Other files are left alone. |
 | `output` | `SolidImageFormat[]` | `["webp", "jpeg"]` | Formats to emit. They are offered smallest first, whatever the order here. |
 | `publicPath` | `string` | Vite's `publicDir` | Directory the dev server writes processed files to. |
-| `placeholder` | `boolean \| { size?: number } \| { type: "blurhash" }` | `true` | Preview shown while the image loads. See [BlurHash preview](#blurhash-preview). |
+| `placeholder` | `boolean \| { size?: number } \| { type: "blurhash" } \| { type: "thumbhash" }` | `true` | Preview shown while the image loads. See the hash preview sections below. |
 | `concurrency` | `number` | CPU cores | Most images processed at the same time. |
 
 - One file is emitted per output format and per size. `output: ["webp", "jpeg"]` with `sizes: [480, 800]` gives four files per image.
@@ -328,6 +336,29 @@ imagePlugin({
 - The server paints the average color of the image. The browser decodes the hash into a 32px wide canvas and paints it over that color.
 - Only apps that turn it on import `blurhash`. The component itself never does.
 
+#### ThumbHash preview
+
+[ThumbHash](https://github.com/evanw/thumbhash) stores a compact binary preview and can preserve transparency. Turn it on in the plugin:
+
+```bash
+npm i thumbhash
+```
+
+```ts
+imagePlugin({
+  local: {
+    sizes: [480, 800, 1200],
+    placeholder: { type: "thumbhash" },
+  },
+});
+```
+
+- `thumbhash` is an optional peer dependency. Install it yourself. The plugin fails at startup with install steps when it is missing.
+- The plugin auto-orients the source and reduces it to fit inside 100 by 100 pixels before encoding, matching ThumbHash's input limit.
+- The generated source keeps the hash as a `Uint8Array`; the disk cache only serializes its bytes as an array and restores the typed array in the generated module.
+- The server paints ThumbHash's average RGBA color, including alpha. The browser decodes the hash with `thumbHashToDataURL` and paints the preview over that color.
+- Only apps that turn it on import `thumbhash`. The component itself never does.
+
 #### Single file URL
 
 Some places take one file instead of a responsive image, such as an `og:image` tag, a CSS background or a canvas. Import the image with `?image-url` to get the URL of one file.
@@ -350,12 +381,12 @@ Handles imports starting with `image:`.
 | --- | --- | --- |
 | `transformURL` | `(url: string) => MaybePromise<{ src, variants }>` | Maps the text after `image:` to a source and its variants. |
 
-`src` is `{ source, width, height }`, and may carry a `placeholder`. Return `{ url, color }` for an image preview, or `{ hash, color }` for a BlurHash. The plugin adds the decoder for a hash. `variants` is one `SolidImageVariant` or an array of them.
+`src` is `{ source, width, height }`, and may carry a `placeholder`. Return `{ url, color }` for an image preview, `{ hash: string, color }` for a BlurHash, or `{ hash: Uint8Array, color }` for a ThumbHash. The plugin adds the matching decoder for either hash format. `variants` is one `SolidImageVariant` or an array of them.
 
 ## How it works
 
 1. `SolidImage` renders a padding based aspect ratio box, so the layout is stable before the image arrives.
-2. The box is painted with the preview and its color, when the source carries a placeholder. An image preview is a few pixels wide, so the browser scales it up into a blur. A BlurHash is decoded in the browser, and the server paints its average color until then.
+2. The box is painted with the preview and its color, when the source carries a placeholder. An image preview is a few pixels wide, so the browser scales it up into a blur. Hash previews are decoded in the browser; the server paints their average color until then.
 3. An `IntersectionObserver` watches the container. Nothing loads until it comes within `rootMargin` of the viewport.
 4. Once near, the `<img>` and your placeholder render. The image starts transparent.
 5. Your placeholder calls `onLoad` to say it is on screen.
@@ -380,7 +411,7 @@ pnpm test:watch
 pnpm changeset    # add a changeset before opening a pull request
 ```
 
-The [examples](./examples) folder has demo apps for the image and BlurHash previews.
+The [examples](./examples) folder has demo apps for the image, BlurHash and ThumbHash previews.
 
 The suite is split into two Vitest projects.
 

@@ -1,6 +1,11 @@
 import type { JSX } from "solid-js";
 import type { AspectRatio } from "./aspect-ratio";
-import type { SolidImageBlurhashPlaceholder, SolidImagePlaceholder } from "./types";
+import type {
+  SolidImageBlurhashPlaceholder,
+  SolidImagePlaceholder,
+  SolidImagePreview,
+  SolidImageThumbhashPlaceholder,
+} from "./types";
 
 function kebabify(str: string): string {
   return str
@@ -61,11 +66,18 @@ export function getPlaceholderStyle(placeholder: {
   return style;
 }
 
-/** Tells a BlurHash preview apart from an inline image preview. */
+/** Tells a BlurHash preview apart from the other preview formats. */
 export function isBlurhashPlaceholder(
-  placeholder: SolidImagePlaceholder | SolidImageBlurhashPlaceholder,
+  placeholder: SolidImagePreview,
 ): placeholder is SolidImageBlurhashPlaceholder {
-  return "hash" in placeholder;
+  return "hash" in placeholder && typeof placeholder.hash === "string";
+}
+
+/** Tells a ThumbHash preview apart from the other preview formats. */
+export function isThumbhashPlaceholder(
+  placeholder: SolidImagePreview,
+): placeholder is SolidImageThumbhashPlaceholder {
+  return "hash" in placeholder && placeholder.hash instanceof Uint8Array;
 }
 
 /**
@@ -91,6 +103,11 @@ export function getBlurhashURL(
   context.putImageData(image, 0, 0);
 
   return canvas.toDataURL();
+}
+
+/** Decodes a ThumbHash into the data URL painted behind the image. */
+export function getThumbhashURL(placeholder: SolidImageThumbhashPlaceholder): string {
+  return placeholder.decode(placeholder.hash);
 }
 
 /** Returns an empty SVG of the given size. */
