@@ -290,7 +290,7 @@ Handles imports ending in `?image`, and single file imports ending in `image-url
 | `quality` | `number \| { [format]: number }` | 50 for AVIF, 80 for the rest | Quality passed to sharp, from 1 to 100. A number applies to every format. PNG and GIF ignore it. |
 | `input` | `SolidImageFormat[]` | `["png", "jpeg", "webp", "gif"]` | Source formats to process. Other files are left alone. |
 | `output` | `SolidImageFormat[]` | `["webp", "jpeg"]` | Formats to emit. They are offered smallest first, whatever the order here. |
-| `publicPath` | `string` | Vite's `publicDir` | Directory the dev server writes processed files to. |
+| `publicPath` | `string` | Vite's `publicDir` | Directory the dev server stores processed files in. |
 | `placeholder` | `boolean \| { size?: number } \| { type: "blurhash" } \| { type: "thumbhash" }` | `true` | Preview shown while the image loads. See the hash preview sections below. |
 | `concurrency` | `number` | CPU cores | Most images processed at the same time. |
 
@@ -303,11 +303,11 @@ Handles imports ending in `?image`, and single file imports ending in `image-url
 - Animated images keep every frame in WebP and GIF. Other formats keep the first frame. Animated GIFs are processed by default, and usually come out much smaller as WebP.
 - JPEG uses mozjpeg and WebP uses its highest effort. PNG is lossless, so `quality` does not apply to it.
 - On build the files go through the bundler as assets, so `base`, `assetsDir` and the build manifest apply to them. Nothing is written to `publicPath`.
-- On the dev server the files are written to `<publicPath>/.image/i-<hash>-<width>.<ext>` and served from `/.image/...`.
-- `publicPath` defaults to Vite's public directory, which the dev server serves at the root of the site. Add `.image` to `.gitignore`.
+- On the dev server a file is encoded on its first request, so a page only waits for the variants the browser picks. The file is stored at `<publicPath>/.image/i-<hash>-<width>.<ext>` and served from `/.image/...`.
+- `publicPath` defaults to Vite's public directory. Add `.image` to `.gitignore`.
 - The `<img>` falls back to the largest size of the last output format. The original file is never imported, so it does not reach the bundle.
 - The hash covers the content of the source file, the format, the width and the quality. It leaves out the path and the modification time, so a fresh checkout in CI still hits the cache.
-- An image is encoded once and reused. The dev server reuses the file in `publicPath`. A build reuses its copy in the Vite cache directory.
+- An image is encoded once and reused, even when the client and server environments ask for it at the same time. The dev server reuses the file in `publicPath`. A build reuses its copy in the Vite cache directory.
 - Previews are cached the same way, so a build or a dev server restart does not compute them again.
 - The cache key also carries a pipeline version. A plugin update that changes how images are encoded writes new files instead of reusing old ones.
 - Cached files unused for a week are removed when the dev server or a build starts.
