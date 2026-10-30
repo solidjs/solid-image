@@ -1,4 +1,4 @@
-import sharp from "sharp";
+import sharp, { type Sharp, type Stats } from "sharp";
 import type { SolidImageFormat } from "../core/types.ts";
 
 /**
@@ -52,6 +52,23 @@ function toHex(value: number): string {
   return value.toString(16).padStart(2, "0");
 }
 
+// Longest side of the copy the dominant color is read from. At this size the
+// color matches the full image, or is one histogram step off, and the read is
+// several times faster for a large photo.
+const STATS_SAMPLE_SIZE = 400;
+
+async function getSampleStats(input: Sharp): Promise<Stats> {
+  // `stats()` reads the decoded input and skips any resize, so the copy is
+  // written out as raw pixels and read back before taking its stats.
+  const { data, info } = await input
+    .resize(STATS_SAMPLE_SIZE, STATS_SAMPLE_SIZE, { fit: "inside", withoutEnlargement: true })
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  return await sharp(data, {
+    raw: { width: info.width, height: info.height, channels: info.channels },
+  }).stats();
+}
+
 /**
  * Builds a preview small enough to inline in the page.
  * The image is downscaled to a few pixels and encoded as a data URL,
@@ -64,7 +81,7 @@ export async function getPlaceholderData(
   const input = sharp(originalPath).autoOrient();
   const [buffer, stats] = await Promise.all([
     input.clone().resize(size).webp({ quality: 40 }).toBuffer(),
-    input.clone().stats(),
+    getSampleStats(input.clone()),
   ]);
 
   const { r, g, b } = stats.dominant;
