@@ -2,7 +2,12 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { Plugin } from "vite";
-import { getFilesFromFormat, getMIMEFromFormat, getOutputFileFromFormat } from "../core/transformer.ts";
+import {
+  getFilesFromFormat,
+  getFormatFromFile,
+  getMIMEFromFormat,
+  getOutputFileFromFormat,
+} from "../core/transformer.ts";
 import type {
   SolidImageBlurhashPlaceholder,
   SolidImageFile,
@@ -309,6 +314,32 @@ function remember<T>(cache: Map<string, Promise<T>>, file: string, read: () => P
 }
 
 /**
+ * Shares one run of a task between every caller that asks while it runs.
+ * The result is dropped once the task settles, so a finished file is read back
+ * from disk instead of held in memory.
+ */
+function share<T>(running: Map<string, Promise<T>>, key: string, task: () => Promise<T>): Promise<T> {
+  let value = running.get(key);
+  if (!value) {
+    value = task().finally(() => running.delete(key));
+    running.set(key, value);
+  }
+  return value;
+}
+
+/** What it takes to encode one variant of a source image. */
+interface VariantJob {
+  originalPath: string;
+  format: SolidImageFormat;
+  size: number;
+  quality: number;
+}
+
+// Path of a request for an encoded variant on the dev server. The name is
+// matched in full, so a request can never reach outside the variant directory.
+const VARIANT_REQUEST = /^\/\.image\/(i-[0-9a-f]+-[0-9]+\.(avif|jpg|png|webp|tiff|gif))(\?.*)?$/;
+
+/**
  * Builds the module that carries the image, its intrinsic size and its preview.
  *
  * `source` points at the largest variant of the fallback format rather than the
@@ -526,6 +557,38 @@ export default {
     const readSignature = (file: string) => remember(signatures, file, () => getFileSignature(file));
     const readInfo = (file: string) => remember(infos, file, () => limit(() => getImageData(file)));
 
+    // Client and server environments load the same modules at the same time.
+    // Each preview and each variant is computed once and handed to both.
+    const runningPreviews = new Map<string, Promise<Preview>>();
+    const runningVariants = new Map<string, Promise<Buffer | undefined>>();
+
+    // The dev server encodes a variant only when the browser asks for it. Its
+    // module records how to encode it here, under the file name.
+    const devVariants = new Map<string, VariantJob>();
+
+    /**
+     * Returns the encoded variant stored at `file`. It is encoded and written
+     * there first when it is missing. Without a job, a missing file returns
+     * undefined.
+     */
+    function readVariant(file: string, job: VariantJob | undefined): Promise<Buffer | undefined> {
+      return share(runningVariants, file, async () => {
+        if (await fileExists(file)) {
+          const buffer = await fs.readFile(file);
+          await touchFile(file);
+          return buffer;
+        }
+        if (!job) {
+          return undefined;
+        }
+        const buffer = await limit(() =>
+          transformImage(job.originalPath, job.format, job.size, job.quality).toBuffer(),
+        );
+        await outputFile(file, buffer);
+        return buffer;
+      });
+    }
+
     // Previews are cached on disk like the variants, keyed by content, so a
     // build or a dev server restart does not compute them again.
     async function readPreview(file: string): Promise<Preview | undefined> {
@@ -538,19 +601,21 @@ export default {
       const hash = xxHash32(`v${PIPELINE_VERSION}|${signature}|${kind}`).toString(16);
       const cachePath = path.join(cacheDir, "previews", `p-${hash}.json`);
 
-      if (await fileExists(cachePath)) {
-        try {
-          const cached = JSON.parse(await fs.readFile(cachePath, "utf8")) as Preview;
-          await touchFile(cachePath);
-          return cached;
-        } catch {
-          // A damaged cache file is computed again below.
+      return await share(runningPreviews, cachePath, async () => {
+        if (await fileExists(cachePath)) {
+          try {
+            const cached = JSON.parse(await fs.readFile(cachePath, "utf8")) as Preview;
+            await touchFile(cachePath);
+            return cached;
+          } catch {
+            // A damaged cache file is computed again below.
+          }
         }
-      }
 
-      const preview = await limit(() => computePlaceholder(file, placeholder));
-      await outputFile(cachePath, JSON.stringify(preview));
-      return preview;
+        const preview = await limit(() => computePlaceholder(file, placeholder));
+        await outputFile(cachePath, JSON.stringify(preview));
+        return preview;
+      });
     }
 
     plugins.push({
@@ -579,6 +644,33 @@ export default {
         if (publicPathOption == null && config.publicDir) {
           publicPath = config.publicDir;
         }
+      },
+      configureServer(server) {
+        // Serves the variants named by dev modules, and encodes each one on its
+        // first request. A page only waits for the variants the browser picks,
+        // not for every format and size of every image.
+        server.middlewares.use((req, res, next) => {
+          const match = VARIANT_REQUEST.exec(req.url ?? "");
+          if (!match) {
+            next();
+            return;
+          }
+          const [, name, extension] = match;
+          readVariant(path.join(publicPath, ".image", name!), devVariants.get(name!)).then(
+            buffer => {
+              // A file this server does not know may still be in the public directory.
+              if (!buffer) {
+                next();
+                return;
+              }
+              res.setHeader("Content-Type", getMIMEFromFormat(getFormatFromFile(extension as SolidImageFile)));
+              // The name holds a hash of the content, so the file never changes.
+              res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+              res.end(buffer);
+            },
+            next,
+          );
+        });
       },
       watchChange(id) {
         const key = path.normalize(id);
@@ -636,7 +728,7 @@ export default {
           const quality = getQuality(format);
           const signature = await readSignature(originalPath);
           const filename = getVariantFilename(signature, format, size, quality);
-          const encode = () => limit(() => transformImage(originalPath, format, size, quality).toBuffer());
+          const job: VariantJob = { originalPath, format, size, quality };
 
           // On build the file goes through the bundler, so it picks up `base`,
           // `assetsDir` and the manifest like any other asset.
@@ -644,15 +736,8 @@ export default {
             // Nothing is written to the public directory on build, so keep the
             // encoded file in the Vite cache directory. The next build reads it
             // back instead of encoding again.
-            const cachePath = path.join(cacheDir, filename);
-            let buffer: Buffer;
-            if (await fileExists(cachePath)) {
-              buffer = await fs.readFile(cachePath);
-              await touchFile(cachePath);
-            } else {
-              buffer = await encode();
-              await outputFile(cachePath, buffer);
-            }
+            // With a job the variant is always encoded, so a buffer comes back.
+            const buffer = (await readVariant(path.join(cacheDir, filename), job))!;
             const referenceId = this.emitFile({
               type: "asset",
               name: filename,
@@ -661,15 +746,10 @@ export default {
             return `export default import.meta.ROLLUP_FILE_URL_${referenceId};`;
           }
 
-          const basePath = path.join(".image", filename);
-          const targetPath = path.join(publicPath, basePath);
-          // Encoding is the slow part, so skip it when the file is already there.
-          if (await fileExists(targetPath)) {
-            await touchFile(targetPath);
-          } else {
-            await outputFile(targetPath, await encode());
-          }
-          return `export default "/${basePath}"`;
+          // On the dev server the module only names the file. The middleware
+          // encodes it when the browser asks for it.
+          devVariants.set(filename, job);
+          return `export default "/.image/${filename}"`;
         }
         // Image transformer variant
         if (condition.startsWith("image-")) {

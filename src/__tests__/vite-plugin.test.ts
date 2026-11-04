@@ -52,6 +52,32 @@ function callWatchChange(plugin: Plugin, id: string) {
   fn.call({} as any, id, { event: "update" });
 }
 
+interface ServedFile {
+  /** False when the middleware passed the request on. */
+  handled: boolean;
+  headers: Record<string, string>;
+  body?: Buffer;
+}
+
+// Sends one request through the dev server middleware of the plugin.
+function requestFile(plugin: Plugin, url: string): Promise<ServedFile> {
+  const hook = plugin.configureServer as any;
+  const fn = typeof hook === "function" ? hook : hook.handler;
+  let middleware: any;
+  fn.call({} as any, { middlewares: { use: (handler: unknown) => (middleware = handler) } });
+
+  return new Promise((resolve, reject) => {
+    const headers: Record<string, string> = {};
+    const res = {
+      setHeader: (name: string, value: string) => (headers[name] = value),
+      end: (body: Buffer) => resolve({ handled: true, headers, body }),
+    };
+    middleware({ url }, res, (error?: unknown) =>
+      error ? reject(error) : resolve({ handled: false, headers }),
+    );
+  });
+}
+
 function getPlugin(plugins: Plugin[], name: string): Plugin {
   const found = plugins.find(plugin => plugin.name === name);
   if (!found) {
@@ -356,7 +382,7 @@ describe("local images", () => {
     expect(code).toContain('import source from "./photo.png?image-raw-webp-400"');
   });
 
-  it("emits the resized file and exports its public path", async () => {
+  it("exports the public path and encodes the file on its first request", async () => {
     const plugin = createLocalPlugin();
     const code: string = await callLoad(plugin, path.join(dir, "photo.png?image-raw-webp-400"));
 
@@ -367,8 +393,14 @@ describe("local images", () => {
     expect(publicUrl.startsWith("/.image/")).toBe(true);
     expect(publicUrl.endsWith(".webp")).toBe(true);
 
+    // Loading the module encodes nothing. The request does.
     const emitted = path.join(publicPath, publicUrl);
-    expect(await fs.stat(emitted).then(stat => stat.isFile())).toBe(true);
+    await expect(fs.stat(emitted)).rejects.toThrow();
+
+    const served = await requestFile(plugin, publicUrl);
+    expect(served.handled).toBe(true);
+    expect(served.headers["Content-Type"]).toBe("image/webp");
+    expect(served.body).toEqual(await fs.readFile(emitted));
 
     const meta = await sharp(emitted).metadata();
     expect(meta.format).toBe("webp");
@@ -449,20 +481,51 @@ describe("local images", () => {
   it("reuses the file it already emitted instead of encoding again", async () => {
     const plugin = createLocalPlugin();
     const code: string = await callLoad(plugin, path.join(dir, "photo.png?image-raw-webp-800"));
-    const emitted = path.join(publicPath, /export default "(.+)"/.exec(code)![1]!);
+    const publicUrl = /export default "(.+)"/.exec(code)![1]!;
+    const emitted = path.join(publicPath, publicUrl);
+    await requestFile(plugin, publicUrl);
 
     const before = await fs.stat(emitted);
     await fs.writeFile(emitted, "not an image");
-    await callLoad(plugin, path.join(dir, "photo.png?image-raw-webp-800"));
+    const served = await requestFile(plugin, publicUrl);
     const after = await fs.readFile(emitted, "utf8");
 
     // The plugin left the file alone, so nothing was encoded a second time.
     expect(after).toBe("not an image");
+    expect(served.body?.toString("utf8")).toBe("not an image");
 
     await fs.rm(emitted);
-    await callLoad(plugin, path.join(dir, "photo.png?image-raw-webp-800"));
+    await requestFile(plugin, publicUrl);
 
     expect((await fs.stat(emitted)).size).toBe(before.size);
+  });
+
+  it("encodes a variant once when two requests arrive together", async () => {
+    const plugin = createLocalPlugin();
+    const code: string = await callLoad(plugin, path.join(dir, "photo.png?image-raw-webp-400"));
+    const publicUrl = /export default "(.+)"/.exec(code)![1]!;
+    await fs.rm(path.join(publicPath, publicUrl), { force: true });
+
+    const spy = vi.spyOn(fs, "rename");
+    const [first, second] = await Promise.all([
+      requestFile(plugin, publicUrl),
+      requestFile(plugin, publicUrl),
+    ]);
+    const writes = spy.mock.calls.filter(([, target]) => target === path.join(publicPath, publicUrl));
+    spy.mockRestore();
+
+    expect(writes).toHaveLength(1);
+    expect(first.body).toEqual(second.body);
+  });
+
+  it("passes on requests it does not serve", async () => {
+    const plugin = createLocalPlugin();
+
+    expect((await requestFile(plugin, "/app.js")).handled).toBe(false);
+    // An unknown variant that was never written is left to the next middleware.
+    expect((await requestFile(plugin, "/.image/i-0-400.webp")).handled).toBe(false);
+    // Only a plain file name matches, so a request cannot leave the directory.
+    expect((await requestFile(plugin, "/.image/../secret.webp")).handled).toBe(false);
   });
 
   it("gives a different file name when the quality changes", async () => {
@@ -600,6 +663,7 @@ describe("local images", () => {
 
     const code: string = await callLoad(plugin, path.join(dir, "animated.gif?image-raw-webp-400"));
     const publicUrl = /export default "(.+)"/.exec(code)![1]!;
+    await requestFile(plugin, publicUrl);
     const meta = await sharp(path.join(publicPath, publicUrl), { animated: true }).metadata();
 
     expect(meta.format).toBe("webp");
@@ -654,6 +718,7 @@ describe("local images", () => {
 
     const code: string = await callLoad(plugin, path.join(dir, "photo.png?image-raw-webp-400"));
     const publicUrl = /export default "(.+)"/.exec(code)![1]!;
+    await requestFile(plugin, publicUrl);
 
     expect((await fs.stat(path.join(publicDir, publicUrl))).isFile()).toBe(true);
   });
@@ -665,6 +730,7 @@ describe("local images", () => {
 
     const code: string = await callLoad(plugin, path.join(dir, "photo.png?image-raw-webp-400"));
     const publicUrl = /export default "(.+)"/.exec(code)![1]!;
+    await requestFile(plugin, publicUrl);
 
     expect((await fs.stat(path.join(publicPath, publicUrl))).isFile()).toBe(true);
     await expect(fs.stat(publicDir)).rejects.toThrow();
@@ -701,6 +767,7 @@ describe("local images", () => {
     const code: string = await callLoad(plugin, path.join(dir, "photo.png?image-raw-jpeg-400"));
 
     const publicUrl = /export default "(.+)"/.exec(code)![1]!;
+    await requestFile(plugin, publicUrl);
     const meta = await sharp(path.join(publicPath, publicUrl)).metadata();
 
     expect(meta.format).toBe("jpeg");

@@ -1,33 +1,14 @@
 import type { JSX } from "solid-js";
-import type { AspectRatio } from "./aspect-ratio";
 import type {
   SolidImageBlurhashPlaceholder,
-  SolidImagePlaceholder,
   SolidImagePreview,
   SolidImageThumbhashPlaceholder,
 } from "./types";
 
-function kebabify(str: string): string {
-  return str
-    .replace(/([A-Z])([A-Z])/g, "$1-$2")
-    .replace(/([a-z])([A-Z])/g, "$1-$2")
-    .replace(/[\s_]+/g, "-")
-    .toLowerCase();
-}
-
-/**
- * Converts camelCase style keys to kebab-case.
- * Solid only accepts kebab-case keys when the style object is rendered as a string.
- */
-export function shimStyle(style: JSX.CSSProperties): JSX.CSSProperties {
-  const keys = Object.keys(style) as (keyof JSX.CSSProperties)[];
-  const newStyle: JSX.CSSProperties = {};
-
-  for (let i = 0, len = keys.length; i < len; i += 1) {
-    const key = kebabify(keys[i]!);
-    newStyle[key as any] = style[keys[i]!];
-  }
-  return newStyle;
+/** A width and a height, in pixels or as a ratio. */
+export interface AspectRatio {
+  width: number;
+  height: number;
 }
 
 /**
