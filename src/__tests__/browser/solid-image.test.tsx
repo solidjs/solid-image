@@ -462,6 +462,41 @@ describe("SolidImage in the browser", () => {
     await expect.poll(() => findImage(host)?.getAttribute("src")).toBe(PIXEL);
   });
 
+  it("shares one observer between images with the same margin", async () => {
+    // Count the observers the images create.
+    const Original = window.IntersectionObserver;
+    let created = 0;
+    window.IntersectionObserver = class extends Original {
+      constructor(...args: ConstructorParameters<typeof IntersectionObserver>) {
+        super(...args);
+        created += 1;
+      }
+    };
+
+    try {
+      const { host, scrollIntoView } = mount(() => (
+        <>
+          <SolidImage src={{ source: PIXEL, width: 100, height: 100, options: {} }} alt="a" />
+          <SolidImage src={{ source: PIXEL, width: 100, height: 100, options: {} }} alt="b" />
+          <SolidImage
+            src={{ source: PIXEL, width: 100, height: 100, options: {} }}
+            alt="c"
+            rootMargin="10px"
+          />
+        </>
+      ));
+      await expect.poll(() => created).toBe(2);
+
+      // The shared observer still tells each image apart.
+      scrollIntoView();
+      await expect
+        .poll(() => host.querySelectorAll(`img[data-solid-image="image"][src="${PIXEL}"]`).length)
+        .toBe(3);
+    } finally {
+      window.IntersectionObserver = Original;
+    }
+  });
+
   it("reserves the aspect ratio before the image loads", () => {
     const { host } = mount(() => (
       <SolidImage

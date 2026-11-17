@@ -3,7 +3,6 @@ import type { Abortable } from "node:events";
 import type { Mode, ObjectEncodingOptions, OpenMode } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import type { Stream } from "node:stream";
 
 export async function removeFile(filePath: string): Promise<void> {
   return await fs.rm(filePath, { recursive: true, force: true });
@@ -110,12 +109,7 @@ export async function pathExists(filePath: string) {
 
 export async function outputFile(
   file: string,
-  data:
-    | string
-    | NodeJS.ArrayBufferView
-    | Iterable<string | NodeJS.ArrayBufferView>
-    | AsyncIterable<string | NodeJS.ArrayBufferView>
-    | Stream,
+  data: string | NodeJS.ArrayBufferView,
   encoding?:
     | (ObjectEncodingOptions & {
         mode?: Mode | undefined;
@@ -128,5 +122,15 @@ export async function outputFile(
   if (!(await pathExists(dir))) {
     await makeDir(dir);
   }
-  return fs.writeFile(file, data, encoding);
+
+  // Write to a temporary file, then rename it into place. A rename is atomic,
+  // so another load or build never reads a half-written file.
+  const temporary = `${file}.${process.pid}-${crypto.randomUUID()}.tmp`;
+  try {
+    await fs.writeFile(temporary, data, encoding);
+    await fs.rename(temporary, file);
+  } catch (error) {
+    await removeFile(temporary);
+    throw error;
+  }
 }

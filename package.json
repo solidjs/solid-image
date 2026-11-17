@@ -34,9 +34,9 @@
     "sharp": "^0.35.3"
   },
   "peerDependencies": {
-    "@solidjs/web": "^2.0.0-rc.8",
+    "@solidjs/web": "^2.0.0",
     "blurhash": "^2.0.5",
-    "solid-js": "^2.0.0-rc.8",
+    "solid-js": "^2.0.0",
     "thumbhash": "^0.1.1",
     "vite": "^8 || ^9"
   },
@@ -50,15 +50,15 @@
   },
   "devDependencies": {
     "@changesets/cli": "^2.30.0",
-    "@solidjs/vite-plugin": "3.0.0-next.43",
-    "@solidjs/web": "2.0.0-rc.8",
+    "@solidjs/vite-plugin": "3.0.0",
+    "@solidjs/web": "2.0.0",
     "@tsdown/css": "^0.22.12",
     "@types/node": "^25.5.0",
     "@vitest/browser": "4.1.10",
     "@vitest/browser-playwright": "4.1.10",
     "blurhash": "2.0.5",
     "playwright": "^1.63.0",
-    "solid-js": "2.0.0-rc.8",
+    "solid-js": "2.0.0",
     "thumbhash": "0.1.1",
     "tsdown": "^0.22.12",
     "typescript": "^7.0.0",
@@ -74,5 +74,6 @@
   },
   "engines": {
     "node": ">=24"
-  }
+  },
+  "packageManager": "pnpm@12.15.0"
 }
