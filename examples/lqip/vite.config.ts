@@ -1,6 +1,6 @@
 import { imagePlugin } from "@solidjs/image/vite";
+import solid from "@solidjs/vite-plugin";
 import { defineConfig } from "vite";
-import solid from "vite-plugin-solid";
 
 export default defineConfig({
   plugins: [

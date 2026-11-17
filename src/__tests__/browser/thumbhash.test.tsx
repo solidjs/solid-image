@@ -1,5 +1,5 @@
-import { onMount, Show } from "solid-js";
-import { render } from "solid-js/web";
+import { onSettled, Show } from "solid-js";
+import { render } from "@solidjs/web";
 import { rgbaToThumbHash, thumbHashToDataURL } from "thumbhash";
 import { afterEach, describe, expect, it } from "vitest";
 import { SolidImage } from "../../core/index";
@@ -33,7 +33,7 @@ function findImage(host: HTMLElement) {
 }
 
 function Placeholder(props: { show: () => void }) {
-  onMount(() => props.show());
+  onSettled(() => props.show());
   return <div>Loading...</div>;
 }
 

@@ -1,13 +1,14 @@
-import type { JSX } from "solid-js";
-import { createSignal, onMount, Show } from "solid-js";
-import { isServer } from "solid-js/web";
+import type { JSX } from "@solidjs/web";
+import { isServer } from "@solidjs/web";
+import { createSignal, onSettled, Show } from "solid-js";
 
 export const createClientSignal = isServer
   ? (): (() => boolean) => () => false
   : (): (() => boolean) => {
       const [flag, setFlag] = createSignal(false);
 
-      onMount(() => {
+      // Runs once the component has settled in the browser.
+      onSettled(() => {
         setFlag(true);
       });
 
@@ -22,16 +23,9 @@ export interface ClientOnlyProps {
 export const ClientOnly = (props: ClientOnlyProps): JSX.Element => {
   const isClient = createClientSignal();
 
-  return Show({
-    keyed: false,
-    get when() {
-      return isClient();
-    },
-    get fallback() {
-      return props.fallback;
-    },
-    get children() {
-      return props.children;
-    },
-  });
+  return (
+    <Show when={isClient()} fallback={props.fallback}>
+      {props.children}
+    </Show>
+  );
 };

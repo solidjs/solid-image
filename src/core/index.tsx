@@ -1,6 +1,6 @@
-import type { JSX } from "solid-js";
-import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
-import { useAssets } from "solid-js/web";
+import type { JSX } from "@solidjs/web";
+import { createEffect, createMemo, createSignal, For, Show, untrack } from "solid-js";
+import { useHead } from "@solidjs/web";
 import { ClientOnly } from "./client-only.tsx";
 import { createLazyRender } from "./create-lazy-render.ts";
 import {
@@ -112,13 +112,13 @@ function SolidImageSources(props: SolidImageSourcesProps): JSX.Element {
  */
 export function SolidImage<T>(props: SolidImageProps<T>): JSX.Element {
   const laze = createLazyRender<HTMLDivElement>({
-    rootMargin: props.rootMargin ?? DEFAULT_ROOT_MARGIN,
+    rootMargin: untrack(() => props.rootMargin ?? DEFAULT_ROOT_MARGIN),
   });
 
   // The image is revealed once it has loaded and once the placeholder is ready.
   // Either can happen first. Without a fallback there is nothing to wait for.
   const [loaded, setLoaded] = createSignal(false);
-  const [placeholderReady, setPlaceholderReady] = createSignal(props.fallback == null);
+  const [placeholderReady, setPlaceholderReady] = createSignal(untrack(() => props.fallback == null));
   const [failed, setFailed] = createSignal(false);
   const revealed = createMemo(() => loaded() && placeholderReady());
   const showPlaceholder = createMemo(() => !revealed() && !failed());
@@ -190,22 +190,26 @@ export function SolidImage<T>(props: SolidImageProps<T>): JSX.Element {
   // A preload in the head lets the browser fetch an eager image before it gets
   // to the image in the page. It names the preferred format with `type`, so a
   // browser that cannot read that format skips the preload instead of fetching
-  // a file it will not use. This only runs on the server.
-  if (props.eager) {
-    useAssets(() => {
+  // a file it will not use. Solid's head manager places the link, in the HTML
+  // from the server and in the document head in the browser.
+  if (untrack(() => props.eager)) {
+    useHead(() => {
       const preferred = groups()[0];
-      return (
-        <link
-          rel="preload"
-          as="image"
-          href={preferred ? undefined : props.src.source}
-          imagesrcset={preferred?.[1]}
-          imagesizes={props.sizes}
-          type={preferred?.[0]}
-          fetchpriority={fetchPriority()}
-          crossOrigin={props.crossOrigin}
-        />
-      );
+      const linkProps: Record<string, unknown> = {
+        rel: "preload",
+        as: "image",
+        href: preferred ? undefined : props.src.source,
+        imagesrcset: preferred?.[1],
+        imagesizes: props.sizes,
+        type: preferred?.[0],
+        fetchpriority: fetchPriority(),
+        crossorigin: props.crossOrigin,
+      };
+      // Leave out attributes that have no value.
+      return {
+        tag: "link",
+        props: Object.fromEntries(Object.entries(linkProps).filter(([, value]) => value != null)),
+      };
     });
   }
 
@@ -218,30 +222,36 @@ export function SolidImage<T>(props: SolidImageProps<T>): JSX.Element {
         }),
   );
 
-  // Hash previews need browser-only decoding. Effects never run on the server,
-  // so SSR paints the average color and the decoded preview follows on hydrate.
+  // Hash previews are decoded in the browser. Effects never run on the server,
+  // so the server paints the average color and the decoded preview follows.
   const [hashURL, setHashURL] = createSignal<string>();
-  createEffect(() => {
-    const placeholder = props.src.placeholder;
-    if (!placeholder) {
-      setHashURL(undefined);
-      return;
-    }
+  createEffect(
+    () => {
+      const placeholder = props.src.placeholder;
+      if (!placeholder) {
+        return undefined;
+      }
 
-    if (isBlurhashPlaceholder(placeholder)) {
-      const ratio = width() > 0 ? height() / width() : 1;
+      return isBlurhashPlaceholder(placeholder) || isThumbhashPlaceholder(placeholder)
+        ? { placeholder, width: width(), height: height() }
+        : undefined;
+    },
+    value => {
+      if (!value) {
+        setHashURL(undefined);
+        return;
+      }
+
+      if (isThumbhashPlaceholder(value.placeholder)) {
+        setHashURL(getThumbhashURL(value.placeholder));
+        return;
+      }
+
+      const ratio = value.width > 0 ? value.height / value.width : 1;
       const decodedHeight = Math.max(1, Math.round(BLURHASH_WIDTH * ratio));
-      setHashURL(getBlurhashURL(placeholder, BLURHASH_WIDTH, decodedHeight));
-      return;
-    }
-
-    if (isThumbhashPlaceholder(placeholder)) {
-      setHashURL(getThumbhashURL(placeholder));
-      return;
-    }
-
-    setHashURL(undefined);
-  });
+      setHashURL(getBlurhashURL(value.placeholder, BLURHASH_WIDTH, decodedHeight));
+    },
+  );
 
   const boxStyle = createMemo(() => {
     const style = getAspectRatioBoxStyle({
@@ -281,7 +291,7 @@ export function SolidImage<T>(props: SolidImageProps<T>): JSX.Element {
                 width={width()}
                 height={height()}
                 alt={props.alt}
-                crossOrigin={props.crossOrigin}
+                crossorigin={props.crossOrigin}
                 fetchpriority={fetchPriority()}
                 decoding={decoding()}
               />
@@ -301,7 +311,7 @@ export function SolidImage<T>(props: SolidImageProps<T>): JSX.Element {
                 style={{
                   opacity: revealed() ? 1 : 0,
                 }}
-                crossOrigin={props.crossOrigin}
+                crossorigin={props.crossOrigin}
                 fetchpriority={fetchPriority()}
                 decoding={decoding()}
               />
@@ -324,7 +334,7 @@ export function SolidImage<T>(props: SolidImageProps<T>): JSX.Element {
                 height={height()}
                 loading="lazy"
                 alt={props.alt}
-                crossOrigin={props.crossOrigin}
+                crossorigin={props.crossOrigin}
                 decoding={decoding()}
               />
             </noscript>
@@ -333,10 +343,8 @@ export function SolidImage<T>(props: SolidImageProps<T>): JSX.Element {
       </div>
       <div data-solid-image="blocker">
         <ClientOnly>
-          <Show when={visible() && props.fallback}>
-            {cb => cb()(showPlaceholder, onPlaceholderLoad)}
-          </Show>
-          <Show when={failed() && props.errorFallback}>{cb => cb()()}</Show>
+          <Show when={visible()}>{props.fallback?.(showPlaceholder, onPlaceholderLoad)}</Show>
+          <Show when={failed()}>{props.errorFallback?.()}</Show>
         </ClientOnly>
       </div>
     </div>
