@@ -16,9 +16,15 @@ Optimized image components and Vite tooling for [Solid](https://solidjs.com).
 npm i @solidjs/image
 ```
 
+For Solid 1.x, install the 0.x line. Its code is on the [`solid-1`](https://github.com/solidjs/solid-image/tree/solid-1) branch.
+
+```bash
+npm i @solidjs/image@0
+```
+
 Requirements:
 
-- `solid-js` and `@solidjs/web` 2.0 or newer, and Vite 8 or newer. All three are peer dependencies. For Solid 1.x, use the 0.x versions of this package, maintained on the `solid-1` branch.
+- `solid-js` and `@solidjs/web` 2.0 or newer, and Vite 8 or newer. All three are peer dependencies.
 - Node 24 or newer for the Vite plugin. It uses [`sharp`](https://sharp.pixelplumbing.com) to process images.
 - [`blurhash`](https://github.com/woltapp/blurhash) 2 or newer, only for the BlurHash preview. It is an optional peer dependency.
 - [`thumbhash`](https://github.com/evanw/thumbhash) 0.1.1 or newer, only for the ThumbHash preview. It is an optional peer dependency.
