@@ -16,10 +16,10 @@ Optimized image components and Vite tooling for [Solid](https://solidjs.com).
 npm i @solidjs/image
 ```
 
-For Solid 1.x, install the 0.x line from the `solid-1` tag. Its code is on the [`solid-1`](https://github.com/solidjs/solid-image/tree/solid-1) branch.
+For Solid 1.x, install the 0.x line. Its code is on the [`solid-1`](https://github.com/solidjs/solid-image/tree/solid-1) branch.
 
 ```bash
-npm i @solidjs/image@solid-1
+npm i @solidjs/image@0
 ```
 
 Requirements:
