@@ -4,10 +4,10 @@ on:
   workflow_dispatch:
   pull_request:
     branches:
-      - main
+      - solid-1
   push:
     branches:
-      - main
+      - solid-1
 
 permissions:
   contents: read
