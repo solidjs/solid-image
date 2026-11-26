@@ -188,6 +188,7 @@ describe("SolidImage in the browser", () => {
       />
     ));
 
+    await expect.poll(() => host.querySelector("noscript")).toBe(null);
     await new Promise(resolve => setTimeout(resolve, 100));
 
     expect(host.querySelector("source")).toBe(null);
