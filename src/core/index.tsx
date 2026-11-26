@@ -277,7 +277,10 @@ export function SolidImage<T>(props: SolidImageProps<T>): JSX.Element {
     <div ref={laze.ref} data-solid-image="container">
       <div data-solid-image="aspect-ratio" style={boxStyle()}>
         <picture data-solid-image="picture">
-          <SolidImageSources groups={groups()} sizes={props.sizes} />
+          {/* A picture's source is fetched on sight, whatever the img's src. */}
+          <Show when={visible()}>
+            <SolidImageSources groups={groups()} sizes={props.sizes} />
+          </Show>
           <ClientOnly
             fallback={
               // An eager image is rendered in full, so the browser finds it

@@ -171,6 +171,33 @@ describe("SolidImage in the browser", () => {
     expect(sources[0]!.srcset).toBe(`${PIXEL} 400w,${PIXEL} 800w`);
   });
 
+  it("does not fetch the preferred variant before the image scrolls into view", async () => {
+    const stamp = Date.now();
+    const preferred = new URL(`/lazy-variant-${stamp}.webp`, location.href).href;
+    const fallback = new URL(`/lazy-variant-${stamp}.png`, location.href).href;
+    const { host, scrollIntoView } = mount(() => (
+      <SolidImage
+        src={{ source: PIXEL, width: 1600, height: 900, options: {} }}
+        alt="pixel"
+        transformer={{
+          transform: () => [
+            { path: preferred, width: 400, type: "image/webp" },
+            { path: fallback, width: 400, type: "image/png" },
+          ],
+        }}
+      />
+    ));
+
+    await new Promise(resolve => setTimeout(resolve, 100));
+
+    expect(host.querySelector("source")).toBe(null);
+    expect(performance.getEntriesByName(preferred)).toHaveLength(0);
+
+    scrollIntoView();
+
+    await expect.poll(() => performance.getEntriesByName(preferred)).toHaveLength(1);
+  });
+
   it("drops the inline placeholder once the image has loaded", async () => {
     const { host, scrollIntoView } = mount(() => (
       <SolidImage
