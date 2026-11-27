@@ -3,7 +3,7 @@ name: Release
 on:
   push:
     branches:
-      - main
+      - solid-1
 
 concurrency: ${{ github.workflow }}-${{ github.ref }}
 
@@ -37,7 +37,7 @@ jobs:
         uses: changesets/action@v1
         with:
           publish: pnpm run release
-          title: "chore: release"
-          commit: "chore: release"
+          title: "chore: release (solid-1)"
+          commit: "chore: release (solid-1)"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -13,7 +13,8 @@
   },
   "homepage": "https://github.com/solidjs/solid-image#readme",
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "tag": "solid-1"
   },
   "files": [
     "dist",
@@ -28,7 +29,7 @@
     "test:watch": "vitest",
     "changeset": "changeset",
     "version": "changeset version",
-    "release": "pnpm build && changeset publish"
+    "release": "pnpm build && changeset publish --tag solid-1"
   },
   "dependencies": {
     "sharp": "^0.35.3"

@@ -12,8 +12,10 @@ Optimized image components and Vite tooling for [Solid](https://solidjs.com).
 
 ## Install
 
+This branch holds the 0.x line for Solid 1.x. For Solid 2, use the [`main`](https://github.com/solidjs/solid-image) branch and version 1.0 or newer.
+
 ```bash
-npm i @solidjs/image
+npm i @solidjs/image@0
 ```
 
 Requirements:
