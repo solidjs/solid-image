@@ -1,5 +1,11 @@
 # @solidjs/image
 
+## 1.0.1
+
+### Patch Changes
+
+- 3d3a8a2: A lazy `SolidImage` no longer renders its `<source>` tags until it is eager or near the viewport, so the browser no longer downloads an offscreen variant before the image scrolls into view.
+
 ## 1.0.0
 
 ### Major Changes
