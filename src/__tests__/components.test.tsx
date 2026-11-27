@@ -133,6 +133,26 @@ describe("SolidImage SSR", () => {
     expect(outsideNoscript).not.toContain("hero.png");
   });
 
+  it("renders no <source> for a lazy image on the server", () => {
+    const html = renderToString(() => (
+      <SolidImage
+        src={{ source: "/hero.png", width: 1600, height: 900, options: {} }}
+        alt="hero"
+        transformer={{
+          transform: () => [
+            { path: "/hero-400.webp", width: 400, type: "image/webp" },
+            { path: "/hero-400.jpg", width: 400, type: "image/jpeg" },
+          ],
+        }}
+        fallback={() => <div>loading</div>}
+      />
+    ));
+
+    const outsideNoscript = html.replace(/<noscript[^>]*>.*?<\/noscript>/gs, "");
+    expect(outsideNoscript).not.toContain("<source");
+    expect(outsideNoscript).not.toContain("hero-400");
+  });
+
   it("renders without a fallback", () => {
     const html = renderToString(() => (
       <SolidImage
@@ -150,6 +170,7 @@ describe("SolidImage SSR", () => {
       <SolidImage
         src={{ source: "/hero.png", width: 1600, height: 900, options: {} }}
         alt="hero"
+        eager
         sizes="(max-width: 600px) 100vw, 50vw"
         transformer={{
           transform: () => [
@@ -169,6 +190,7 @@ describe("SolidImage SSR", () => {
       <SolidImage
         src={{ source: "/hero.png", width: 1600, height: 900, options: {} }}
         alt="hero"
+        eager
         transformer={{
           transform: () => [{ path: "/hero-400.webp", width: 400, type: "image/webp" }],
         }}
@@ -239,6 +261,7 @@ describe("SolidImage SSR", () => {
       <SolidImage
         src={{ source: "/hero.png", width: 1600, height: 900, options: {} }}
         alt="hero"
+        eager
         transformer={{
           transform: () => [
             { path: "/hero-400.webp", width: 400, type: "image/webp" },
