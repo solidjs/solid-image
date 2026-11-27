@@ -1,6 +1,6 @@
 {
   "name": "@solidjs/image",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Optimized image components and Vite tooling for Solid.",
   "type": "module",
   "license": "MIT",
